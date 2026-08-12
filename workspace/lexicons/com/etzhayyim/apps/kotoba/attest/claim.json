@@ -1,0 +1,103 @@
+{
+  "lexicon": 1,
+  "id": "com.etzhayyim.apps.kotoba.attest.claim",
+  "defs": {
+    "main": {
+      "type": "procedure",
+      "description": "Issue a Kotoba attestation as a W3C Verifiable Credential projected to Datoms.",
+      "input": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": ["entity_did", "claim_type", "attester_did", "stake_mkoto"],
+          "properties": {
+            "entity_did": {
+              "type": "string",
+              "maxLength": 512,
+              "description": "DID of the attested entity."
+            },
+            "claim_type": {
+              "type": "string",
+              "maxLength": 64,
+              "knownValues": ["self", "verified_entity", "delegation"]
+            },
+            "attester_did": {
+              "type": "string",
+              "maxLength": 512,
+              "description": "DID of the attester."
+            },
+            "stake_mkoto": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            },
+            "evidence": {
+              "type": "string",
+              "maxLength": 2048,
+              "description": "Optional evidence text; control characters are rejected."
+            },
+            "cacao_b64": { "type": "string" },
+            "auth_presentation": {
+              "type": "object",
+              "required": ["@context", "id", "type", "proof"],
+              "properties": {
+                "@context": { "type": "array", "items": { "type": "string" } },
+                "id": { "type": "string" },
+                "type": { "type": "array", "items": { "type": "string" } },
+                "holder": { "type": "string" },
+                "verifiableCredential": {
+                  "type": "array",
+                  "items": { "type": "object" }
+                },
+                "proof": {
+                  "type": "object",
+                  "required": ["type", "proofPurpose", "verificationMethod", "proofValue"],
+                  "properties": {
+                    "type": { "type": "string" },
+                    "cryptosuite": { "type": "string" },
+                    "proofPurpose": { "type": "string" },
+                    "verificationMethod": { "type": "string" },
+                    "created": { "type": "string" },
+                    "proofValue": { "type": "string" },
+                    "challenge": { "type": "string" },
+                    "domain": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "output": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": [
+            "status",
+            "claim_cid",
+            "credential_cid",
+            "credential_id",
+            "credential_type",
+            "credential_wire_format",
+            "credential_data_model",
+            "commit_cid",
+            "ipns_name",
+            "ipns_sequence"
+          ],
+          "properties": {
+            "status": { "type": "string", "knownValues": ["attested"] },
+            "claim_cid": { "type": "string" },
+            "credential_cid": { "type": "string" },
+            "credential_id": { "type": "string" },
+            "credential_type": { "type": "string" },
+            "credential_wire_format": { "type": "string" },
+            "credential_data_model": { "type": "string" },
+            "commit_cid": { "type": "string" },
+            "ipns_name": { "type": "string" },
+            "ipns_sequence": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    }
+  }
+}

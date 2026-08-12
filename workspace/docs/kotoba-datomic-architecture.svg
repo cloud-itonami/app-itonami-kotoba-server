@@ -1,0 +1,147 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1300 900" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#475569"/></marker>
+    <marker id="ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#15803d"/></marker>
+    <marker id="ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#7c3aed"/></marker>
+    <marker id="ac" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#0e7490"/></marker>
+    <style>
+      .t{font-size:13px;fill:#0f172a}.s{font-size:11px;fill:#475569}
+      .mono{font-family:ui-monospace,Menlo,monospace;font-size:10.5px;fill:#334155}
+      .h{font-size:14px;font-weight:700}.lane{font-size:12px;font-weight:700;letter-spacing:.05em}
+      .badge{font-size:9.5px;font-weight:700}
+    </style>
+  </defs>
+
+  <text x="650" y="30" text-anchor="middle" font-size="20" font-weight="700" fill="#0f172a">kotoba — Datomic-over-IPFS storage engine</text>
+  <text x="650" y="50" text-anchor="middle" class="s">canonical spine = Datom log → ProllyTree (EAVT/AEVT/AVET/VAET) → CommitDag (the WAL) → kotoba's own block store · async export to IPFS + B2</text>
+
+  <!-- ===== CLIENTS ===== -->
+  <rect x="70"  y="72" width="500" height="52" rx="8" fill="#f0fdf4" stroke="#16a34a"/>
+  <text x="86" y="92" class="h" fill="#15803d">WRITE  ·  kg.ingest / transact / quad.put</text>
+  <text x="86" y="111" class="mono">→ Datom{e,a,v,t,added}</text>
+  <rect x="730" y="72" width="500" height="52" rx="8" fill="#faf5ff" stroke="#7c3aed"/>
+  <text x="746" y="92" class="h" fill="#6d28d9">READ  ·  kg.query / kg.sparql / cypher</text>
+  <text x="746" y="111" class="mono">CACAO quad:read gate</text>
+
+  <!-- ===== ① CANONICAL WRITE SPINE ===== -->
+  <rect x="40" y="150" width="690" height="300" rx="12" fill="#f0fdf4" stroke="#16a34a"/>
+  <text x="60" y="174" class="lane" fill="#15803d">① CANONICAL WRITE PATH — content-addressed, reconstructible</text>
+
+  <rect x="60" y="188" width="300" height="74" rx="8" fill="#ffffff" stroke="#16a34a"/>
+  <text x="74" y="208" class="h">Datom + micro-batch commit</text>
+  <text x="74" y="226" class="mono">assert → pending_datoms (in-flight)</text>
+  <text x="74" y="241" class="s">short window → commit(): no separate</text>
+  <text x="74" y="254" class="s">durable WAL — the commit IS the log</text>
+
+  <rect x="380" y="188" width="330" height="74" rx="8" fill="#ffffff" stroke="#16a34a"/>
+  <text x="394" y="208" class="h">ProllyTree indexes (4 + TEA)</text>
+  <text x="394" y="226" class="mono">EAVT·AEVT·AVET·VAET  DAG-CBOR/IPLD</text>
+  <text x="394" y="241" class="s">probabilistic chunk + path-copy delta;</text>
+  <text x="394" y="254" class="mono">node CID = sha2-256(dag-cbor), tag-42 links</text>
+
+  <rect x="60" y="280" width="300" height="74" rx="8" fill="#ffffff" stroke="#16a34a" stroke-width="2"/>
+  <text x="74" y="300" class="h" fill="#15803d">CommitDag = the WAL</text>
+  <text x="74" y="318" class="mono">Commit{root,index_roots,prev,seq}</text>
+  <text x="74" y="333" class="s">immutable · parent-linked · durability =</text>
+  <text x="74" y="346" class="s">atomic head-ref (git / Datomic semantics)</text>
+
+  <rect x="380" y="280" width="330" height="74" rx="8" fill="#ffffff" stroke="#16a34a"/>
+  <text x="394" y="300" class="h">CAR bundle + checkpoint</text>
+  <text x="394" y="318" class="mono">car_bundle.rs · one streaming PUT</text>
+  <text x="394" y="333" class="s">checkpoint(committed_seq) → restart loads</text>
+  <text x="394" y="346" class="s">the head + walks commits since (no replay)</text>
+
+  <!-- pruned note -->
+  <rect x="60" y="372" width="650" height="62" rx="8" fill="#fff7ed" stroke="#fb923c" stroke-dasharray="5 4"/>
+  <text x="74" y="392" class="t" fill="#c2410c">PRUNED — Journal WAL (per-assert 4-topic double-write) &amp; Kubo-as-durable-tier</text>
+  <text x="74" y="409" class="s">the CommitDag already is a write-ahead log; the separate Journal WAL was a redundant double-write +</text>
+  <text x="74" y="423" class="s">the ~30 s Kubo-HTTP replay bottleneck. Demoted to an optional in-flight scratch / removed. (ADR-2606041151)</text>
+
+  <path d="M360 225 L380 225" stroke="#15803d" stroke-width="2" fill="none" marker-end="url(#ag)"/>
+  <path d="M210 262 L210 280" stroke="#15803d" stroke-width="2" fill="none" marker-end="url(#ag)"/>
+  <path d="M360 317 L380 317" stroke="#15803d" stroke-width="2" fill="none" marker-end="url(#ag)"/>
+
+  <!-- ===== ② QUERY TIERS ===== -->
+  <rect x="760" y="150" width="470" height="300" rx="12" fill="#faf5ff" stroke="#7c3aed"/>
+  <text x="780" y="174" class="lane" fill="#6d28d9">② QUERY — Datomic first-tier</text>
+
+  <rect x="780" y="188" width="430" height="70" rx="8" fill="#ffffff" stroke="#16a34a"/>
+  <circle cx="800" cy="210" r="10" fill="#16a34a"/><text x="800" y="214" text-anchor="middle" fill="#fff" class="badge">1</text>
+  <text x="818" y="208" class="h">Datomic index scan + MaterializedView</text>
+  <text x="794" y="226" class="mono">EAVT 180ns · AVET · VAET · BGP routing</text>
+  <text x="794" y="241" class="s">+ incremental MV (IVM) maintained per commit Δ</text>
+  <text x="794" y="252" class="badge" fill="#2563eb">mv.rs — wire into server (ADR-2606041151 B)</text>
+
+  <rect x="780" y="268" width="430" height="60" rx="8" fill="#ffffff" stroke="#a78bfa"/>
+  <circle cx="800" cy="290" r="10" fill="#a78bfa"/><text x="800" y="294" text-anchor="middle" fill="#fff" class="badge">2</text>
+  <text x="818" y="288" class="h">SPARQL-BGP cold scan (auxiliary)</text>
+  <text x="794" y="306" class="mono">kg.sparql → ProllyTree scan_prefix</text>
+  <text x="794" y="320" class="s">SELECT/ASK/DESCRIBE/CONSTRUCT/UPDATE/SERVICE</text>
+
+  <rect x="780" y="338" width="430" height="60" rx="8" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="794" y="358" class="h">as-of / time-travel</text>
+  <text x="794" y="376" class="mono">db_before · TEA append-only history</text>
+  <text x="794" y="390" class="s">非終末論 — every state addressable by commit</text>
+
+  <rect x="780" y="408" width="430" height="30" rx="7" fill="#faf5ff" stroke="#7c3aed" stroke-dasharray="4 3"/>
+  <text x="794" y="427" class="s" fill="#6d28d9">all queries run over the IPFS-backed substrate; the hot Arrangement is only an optimisation (cache)</text>
+
+  <path d="M980 124 L980 150" stroke="#7c3aed" stroke-width="2" fill="none" marker-end="url(#ap)"/>
+  <path d="M300 124 L210 188" stroke="#15803d" stroke-width="2" fill="none" marker-end="url(#ag)"/>
+
+  <!-- ===== ③ STORAGE: kotoba's own block store + async export ===== -->
+  <rect x="40" y="468" width="1190" height="180" rx="12" fill="#fff7ed" stroke="#ea580c"/>
+  <text x="60" y="492" class="lane" fill="#c2410c">③ BLOCK STORE — kotoba is its own IPFS block store + pinner (ADR-2606041151 A)</text>
+
+  <rect x="60" y="506" width="430" height="124" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+  <text x="74" y="526" class="h" fill="#1d4ed8">Embedded local block store + pinner</text>
+  <text x="74" y="544" class="mono">in-process flatfs/sled/redb (direct disk, µs–ms)</text>
+  <text x="74" y="560" class="s">durable hot tier — NOT Kubo-over-HTTP</text>
+  <text x="74" y="576" class="s">pin = a flag in kotoba's own store (no pin/add RPC)</text>
+  <text x="74" y="596" class="s">removes the HTTP hop: ~35× ingest (142→5222 ent/s)</text>
+  <text x="74" y="610" class="s">+ ~30 s WAL replay. BudgetedBlockStore LRU over it.</text>
+  <text x="74" y="624" class="badge" fill="#2563eb">re-introduce embedded store (sled removed 2026-05-26)</text>
+
+  <rect x="510" y="506" width="350" height="124" rx="8" fill="#ffffff" stroke="#64748b"/>
+  <text x="524" y="526" class="h">Async export — sealed commits only</text>
+  <text x="524" y="544" class="mono">Kubo IPFS (network: bitswap + DHT)</text>
+  <text x="524" y="560" class="s">off the hot write path</text>
+  <text x="524" y="580" class="s">→ kotoba as a networked pin SERVICE for peers</text>
+  <text x="524" y="594" class="s">  = live multi-copy via the donated mesh</text>
+  <text x="524" y="608" class="badge" fill="#0e7490">situational, mesh-gated (ADR-2606041151 C / 2606012100)</text>
+
+  <rect x="880" y="506" width="350" height="124" rx="8" fill="#ecfeff" stroke="#06b6d4"/>
+  <text x="894" y="526" class="h" fill="#0e7490">Backblaze B2 — off-host cold pin</text>
+  <text x="894" y="544" class="mono">50-infra/kotoba-b2-pin (DataLad + git-annex S3)</text>
+  <text x="894" y="562" class="s">mirrors every block, drop-after-copy (no 3rd copy)</text>
+  <text x="894" y="578" class="mono">restore: annex get → ipfs block put</text>
+  <text x="894" y="594" class="s">creds from 1Password at runtime (embedcreds=no)</text>
+  <text x="894" y="610" class="badge" fill="#0e7490">ADR-2606041130 · one of several replication targets</text>
+
+  <path d="M385 434 C385 470 275 470 275 506" stroke="#16a34a" stroke-width="2" fill="none" marker-end="url(#a)"/>
+  <text x="300" y="462" class="s" fill="#15803d">commit blocks persisted</text>
+  <path d="M490 568 L510 568" stroke="#64748b" stroke-width="2" fill="none" marker-end="url(#a)" stroke-dasharray="4 3"/>
+  <path d="M490 590 C620 660 760 660 880 600" stroke="#06b6d4" stroke-width="2" fill="none" marker-end="url(#ac)" stroke-dasharray="5 4"/>
+
+  <!-- ===== ④ ANCHORS ===== -->
+  <rect x="40" y="666" width="1190" height="106" rx="12" fill="#f8fafc" stroke="#64748b"/>
+  <text x="60" y="690" class="lane" fill="#334155">④ CANONICAL STATE &amp; TRUST ANCHORS</text>
+
+  <rect x="60" y="702" width="270" height="56" rx="8" fill="#ffffff" stroke="#16a34a"/>
+  <text x="74" y="722" class="t" fill="#15803d">Datom log = canonical</text>
+  <text x="74" y="740" class="s">(E,A,V,T,Added) · ADR-2605312345</text>
+
+  <rect x="350" y="702" width="270" height="56" rx="8" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="364" y="722" class="t">IPNS signed heads</text>
+  <text x="364" y="740" class="s">per-graph root, durable across restart</text>
+
+  <rect x="640" y="702" width="270" height="56" rx="8" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="654" y="722" class="t">Base L2 trust anchor</text>
+  <text x="654" y="740" class="s">commit-DAG root, tamper-evident</text>
+
+  <rect x="930" y="702" width="300" height="56" rx="8" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="944" y="722" class="t">AT-Proto MST</text>
+  <text x="944" y="740" class="s">ingress / interop wire (materializes the log)</text>
+
+  <path d="M275 354 L195 666" stroke="#16a34a" stroke-width="1.2" fill="none" stroke-dasharray="4 3"/>
+</svg>
