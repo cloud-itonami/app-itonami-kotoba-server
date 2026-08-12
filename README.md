@@ -8,7 +8,8 @@ which is currently running on production machines can be *identified*. It is
 
 `kotoba-server` is a Rust crate that was deleted from `kotoba-lang/kotoba` on
 **2026-07-01** under the no-Rust policy of
-[ADR-2607072000](../../90-docs/adr/2607072000-kotoba-rust-avoidance-policy-and-kotoba-server-gap.edn).
+**ADR-2607072000** (`90-docs/adr/2607072000-kotoba-rust-avoidance-policy-and-kotoba-server-gap.edn`
+in the `com-junkawasaki/root` superproject).
 That ADR named it as the one crate with **no cljc successor** which nevertheless
 **stayed deployed**, and deliberately did not start its migration.
 
