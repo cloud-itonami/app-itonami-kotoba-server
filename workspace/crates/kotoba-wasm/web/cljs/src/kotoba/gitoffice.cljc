@@ -18,7 +18,7 @@
 
    Entity ids are caller-supplied LOGICAL ids (real ids = kotoba commit() CIDs).
    Blocks keep their bodyJson elementId as the stable id so re-normalize is idempotent."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.edn :as edn]))
 
 ;; ---------------------------------------------------------------------------
