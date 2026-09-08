@@ -4,7 +4,7 @@
      bb --classpath src -e \"(require 'kotoba.office-test)(kotoba.office-test/-main)\"
    Verifies the kotoba wire contract (v_edn encode/decode mirrors parse_edn_scalar)
    and the byte-exact siwe_message reproduction."
-  (:require [kotoba.office :as o]
+  (:require [kotoba.lang.text] [kotoba.office :as o]
             [kotoba.cacao :as c]
             [clojure.test :refer [deftest is run-tests]]))
 
@@ -74,15 +74,15 @@
 (deftest tx-edn-is-datomic-add-ops
   (let [edn (o/doc->tx-edn sample-doc)]
     ;; re-edit safety: retractEntity for the doc + every block precedes the adds
-    (is (clojure.string/starts-with? edn "[[:db.fn/retractEntity \"doc1\"]"))
-    (is (clojure.string/includes? edn "[:db.fn/retractEntity \"b0\"]"))
-    (is (clojure.string/includes? edn "[:db.fn/retractEntity \"b1a\"]"))
-    (is (clojure.string/ends-with? edn "]]"))
+    (is (kotoba.lang.text/starts-with? edn "[[:db.fn/retractEntity \"doc1\"]"))
+    (is (kotoba.lang.text/includes? edn "[:db.fn/retractEntity \"b0\"]"))
+    (is (kotoba.lang.text/includes? edn "[:db.fn/retractEntity \"b1a\"]"))
+    (is (kotoba.lang.text/ends-with? edn "]]"))
     ;; [:db/add e a v]; entity + string values quoted, keywords bare, longs bare
-    (is (clojure.string/includes? edn "[:db/add \"doc1\" :doc/kind :doc/document]"))
-    (is (clojure.string/includes? edn "[:db/add \"doc1\" :doc/title \"Q3 戦略メモ\"]"))
-    (is (clojure.string/includes? edn "[:db/add \"doc1\" :doc/created-at 1719000005000]"))
-    (is (clojure.string/includes? edn "[:db/add \"b0\" :block/parent \"doc1\"]"))))
+    (is (kotoba.lang.text/includes? edn "[:db/add \"doc1\" :doc/kind :doc/document]"))
+    (is (kotoba.lang.text/includes? edn "[:db/add \"doc1\" :doc/title \"Q3 戦略メモ\"]"))
+    (is (kotoba.lang.text/includes? edn "[:db/add \"doc1\" :doc/created-at 1719000005000]"))
+    (is (kotoba.lang.text/includes? edn "[:db/add \"b0\" :block/parent \"doc1\"]"))))
 
 ;; ---- sovereign body transform (encrypt/decrypt are inverse over :text) ----
 (deftest map-doc-text-transforms-only-block-text
@@ -109,7 +109,7 @@
                  {:iss "did:key:z6MkABC" :aud "https://kotoba.test"
                   :nonce "test-nonce" :issued-at "2026-01-01T00:00:00Z"
                   :expiry "2099-01-01T00:00:00Z" :domain "kotoba.test"})
-        expected (clojure.string/join
+        expected (kotoba.lang.text/join
                   "\n"
                   ["kotoba.test wants you to sign in with your Ethereum account:"
                    "z6MkABC"

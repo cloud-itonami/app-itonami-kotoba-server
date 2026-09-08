@@ -8,7 +8,7 @@
      4. OFFLINE edit → queued (Service-Worker-style sync queue) → RECONNECT → auto-flush
    One server (KOTOBA_API_URL) serves both the app and /xrpc."
   (:require [playwright-clj.core :as pw]
-            [clojure.string :as str]))
+            [kotoba.lang.text :as str]))
 
 (defn -main [& _]
   (let [base  (or (System/getenv "KOTOBA_API_URL") "http://localhost:8099")

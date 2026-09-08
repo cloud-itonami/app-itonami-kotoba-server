@@ -17,7 +17,7 @@
 
    Capability tokens are the DATOMIC ones (kotoba-auth CacaoPayload::OP_*):
    datom:read / datom:transact / tx:create — NOT the kotoba-graph quad:* tokens."
-  (:require [clojure.string :as str]))
+  (:require [kotoba.lang.text :as str]))
 
 ;; ===========================================================================
 ;; grant capability -> CACAO operation token + resources

@@ -6,7 +6,7 @@
 
    Serve the web dir on localhost first; pass its URL via KOTOBA_WEB_URL.
      (python3 -m http.server in ../  →) KOTOBA_WEB_URL=http://localhost:8123 clojure -M:run"
-  (:require [playwright-clj.core :as pw]))
+  (:require [kotoba.lang.text] [playwright-clj.core :as pw]))
 
 (def office-flow-js
   "() => {
@@ -48,7 +48,7 @@
           (check "crypto.subtle available (secure ctx)" (true? (get r "subtle")))
           (check "serviceWorker API present" (true? (get r "sw")))
           (check "accountDid is did:key:z6Mk"
-                 (clojure.string/starts-with? (str (get r "account")) "did:key:z6Mk"))
+                 (kotoba.lang.text/starts-with? (str (get r "account")) "did:key:z6Mk"))
           (check "privateGraphId derived" (pos? (long (get r "graphLen"))))
           (check "body encrypted to signal:v1:" (true? (get r "encOk")))
           (check "plaintext not in ciphertext" (false? (get r "leak")))
@@ -74,7 +74,7 @@
                               flag: k.passkeyEnrolled() };
                    }")]
           (check "passkey PRF unlock recovers the SAME account"
-                 (and (clojure.string/starts-with? (str (get r "enrolled")) "did:key:z6Mk")
+                 (and (kotoba.lang.text/starts-with? (str (get r "enrolled")) "did:key:z6Mk")
                       (= (get r "enrolled") (get r "recovered"))))
           (check "recovered identity differs from a random one"
                  (not= (get r "enrolled") (get r "random")))

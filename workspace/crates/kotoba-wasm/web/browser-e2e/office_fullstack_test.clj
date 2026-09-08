@@ -11,7 +11,7 @@
    The browser runs cross-origin (harness:PORT → api:PORT), so we launch with
    --disable-web-security (a TEST-ONLY flag; production serves app + API same-origin)."
   (:require [playwright-clj.core :as pw]
-            [clojure.string :as str]))
+            [kotoba.lang.text :as str]))
 
 (defn -main [& _]
   (let [web   (or (System/getenv "KOTOBA_WEB_URL") "http://localhost:8128")
