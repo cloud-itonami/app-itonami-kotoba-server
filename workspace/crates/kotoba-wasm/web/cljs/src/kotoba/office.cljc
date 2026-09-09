@@ -12,7 +12,7 @@
    Entity ids here are caller-supplied LOGICAL ids; kotoba content-hashes `e` to a CID.
    :block/text is encrypted at write time via assertEncrypted (signal:v1:) in real use;
    this layer passes it as a plain value (encryption is a separate increment)."
-  (:require [kotoba.lang.text :as str]
+  (:require [clojure.string :as str]
             #?(:clj [cheshire.core :as json])))
 
 ;; ===========================================================================
