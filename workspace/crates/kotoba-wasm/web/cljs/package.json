@@ -4,8 +4,8 @@
   "private": true,
   "description": "ClojureScript read-plane glue for the kotoba browser node (IPNS head resolution + CID-verified query orchestration). Emits ESM into ../cljs-out.",
   "scripts": {
-    "build": "shadow-cljs release web",
-    "watch": "shadow-cljs watch web"
+    "build": "amu compile --target wasm32-browser web",
+    "watch": "amu compile --target wasm32-browser web"
   },
   "devDependencies": {
     "shadow-cljs": "^2.28.0"

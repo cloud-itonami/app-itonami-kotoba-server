@@ -1,4 +1,4 @@
-#!/usr/bin/env bb
+#!/usr/bin/env kbb
 ;; build-pywasm.bb <entry.py> -o <out.wasm>
 ;;
 ;; Compile a kotoba_modal guest entry into a kotoba-node WASM component via

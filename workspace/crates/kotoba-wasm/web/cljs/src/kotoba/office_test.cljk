@@ -1,7 +1,7 @@
 (ns kotoba.office-test
   "Pure (.cljc) verification of the office datom wire format + CACAO bridge.
    Runs under babashka WITHOUT building wasm:
-     bb --classpath src -e \"(require 'kotoba.office-test)(kotoba.office-test/-main)\"
+     kbb --classpath src -e \"(require 'kotoba.office-test)(kotoba.office-test/-main)\"
    Verifies the kotoba wire contract (v_edn encode/decode mirrors parse_edn_scalar)
    and the byte-exact siwe_message reproduction."
   (:require [clojure.string] [kotoba.office :as o]
