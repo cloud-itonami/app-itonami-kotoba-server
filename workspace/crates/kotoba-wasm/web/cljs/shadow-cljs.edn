@@ -5,8 +5,8 @@
 ;; The lower-level CID-verified block engine and the wasm node itself stay where
 ;; they are; this layer owns IPNS-head resolution + query orchestration in cljs.
 ;;
-;; Build:  npx shadow-cljs release web      (prod)
-;;         npx shadow-cljs watch   web      (dev, hot-reload)
+;; Build:  amu compile --target wasm32-browser web      (prod)
+;;         amu compile --target wasm32-browser   web      (dev, hot-reload)
 {:source-paths ["src"]
  :dependencies []
  :builds

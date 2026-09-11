@@ -682,6 +682,6 @@ operator-gated endpoint), so it is an operator/dev console surface.
 Verification: `cargo test -p kotoba-clj` / `-p kotoba-lattice --lib` green
 (incl. fuel + explicit-recognition tests); `kotoba-server` builds **with and
 without** `clj-mesh`; `mesh_xrpc` unit tests pass (compile+run roundtrip = 41);
-`npx shadow-cljs release web` compiles with 0 warnings.
+`amu compile --target wasm32-browser web` compiles with 0 warnings.
 
 Build/run the surface: `cargo run -p kotoba-server --features clj-mesh`.

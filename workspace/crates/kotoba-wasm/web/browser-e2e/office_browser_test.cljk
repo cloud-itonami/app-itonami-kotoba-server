@@ -5,7 +5,7 @@
    secure-context page (so crypto.subtle / Service Worker are available).
 
    Serve the web dir on localhost first; pass its URL via KOTOBA_WEB_URL.
-     (python3 -m http.server in ../  →) KOTOBA_WEB_URL=http://localhost:8123 clojure -M:run"
+     (python3 -m http.server in ../  →) KOTOBA_WEB_URL=http://localhost:8123 kbb -M:run"
   (:require [kotoba.lang.text] [playwright-clj.core :as pw]))
 
 (def office-flow-js
