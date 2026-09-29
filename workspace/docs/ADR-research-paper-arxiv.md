@@ -66,7 +66,7 @@ X3DH/Double Ratchet → `kotoba-signal/src/{x3dh,ratchet}.rs`, sealed tier →
 `ADR-001-five-axis-distributed-redesign.md`, etc.). Benchmark numbers quoted in
 the paper (e.g. 5,222 entities/s sustained ingest; 12,753 QPS CACAO-gated ASK at
 c=32; ~180 ns EAVT point lookup) are the measured values already recorded in
-`CLAUDE.md`'s benchmark section — not fresh, unaudited figures.
+`AGENTS.md`'s benchmark section — not fresh, unaudited figures.
 
 ### Scope boundary
 

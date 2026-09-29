@@ -5,7 +5,7 @@ How to roll out the WASM hosting fabric described in
 
 There is **no central control plane to deploy** (no NATS, no k8s control plane).
 A node *is* `kotoba serve`; the lattice self-forms over libp2p gossipsub. This is
-the no-central-master invariant (CLAUDE.md) carried into hosting.
+the no-central-master invariant (AGENTS.md) carried into hosting.
 
 ## Status (M1 → M5)
 

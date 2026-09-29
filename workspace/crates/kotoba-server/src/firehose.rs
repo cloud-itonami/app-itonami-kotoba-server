@@ -178,7 +178,7 @@ pub struct EventsParams {
 ///   * `private`       → CACAO `datom:read` delegation chain on the operator DID
 ///
 /// Per-entry, per-graph filtering (e.g. a public-only firehose on a private
-/// node) is intentionally out of scope here — see the project CLAUDE.md.
+/// node) is intentionally out of scope here — see the project AGENTS.md.
 async fn gate(
     state: &KotobaState,
     headers: &HeaderMap,

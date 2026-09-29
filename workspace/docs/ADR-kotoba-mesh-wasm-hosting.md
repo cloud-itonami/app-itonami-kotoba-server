@@ -50,7 +50,7 @@ gap**。wasmCloud の NATS を libp2p gossipsub に、OCI registry を CID/bitsw
 > の参照には採らない**（DX 表層のみ借用する）。詳細な選定理由は §14。
 
 1. **No central master.** lattice は self-forming。スケジューラは中央キューではなく
-   gossipsub 上の **auction**（各ノードが入札）。CLAUDE.md の no-central-master 不変条件
+   gossipsub 上の **auction**（各ノードが入札）。AGENTS.md の no-central-master 不変条件
    と整合（relay も「ピア」、discovery は Kademlia）。
 2. **Content-addressed everything.** component artifact・config・manifest はすべて CID。
    「どの component を動かすか」= 「どの CID を実体化するか」。registry も image tag も無い。
@@ -363,7 +363,7 @@ Component にコンパイル）とする。理由は「一言語族で manifest�
 Spin（Rust/JS）や wasmCloud（Rust/TinyGo）が「設定 YAML + 別言語コード + 別言語クエリ」に
 分かれるのに対し、KOTOBA Mesh は **homoiconic に一貫**する。`defgraph`（langgraph DSL）が
 既に動いているので、component = `defgraph` エージェント × Datom 書き込み × Pregel BSP が
-end-to-end で成立している（CLAUDE.md kotoba-clj 節の実績）。
+end-to-end で成立している（AGENTS.md kotoba-clj 節の実績）。
 
 ### 14.1 既定ビルド経路
 
@@ -398,7 +398,7 @@ deploy 時に host 側 / CLI 側で `.clj` をコンパイル → 得た wasm �
 ```
 
 `run` が `kotoba-node` world の export にコンパイルされ、`WasmExecutor` が駆動する
-（CLAUDE.md: `tests/kais_invoke.rs` で実証済みの経路）。HTTP/KSE/cron trigger を使う
+（AGENTS.md: `tests/kais_invoke.rs` で実証済みの経路）。HTTP/KSE/cron trigger を使う
 component は §4.1 の `on-http`/`on-kse`/`on-tick` を追加 export する（kotoba-clj の
 component export 機構を `run` 同様に拡張＝M1 のスコープ）。
 

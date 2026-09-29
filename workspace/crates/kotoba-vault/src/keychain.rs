@@ -1,6 +1,6 @@
 //! Device-local secret storage for `AgentIdentity` material.
 //!
-//! Per root CLAUDE.md (`Local Secret Storage` rule):
+//! Per root AGENTS.md (`Local Secret Storage` rule):
 //!   service = `etzhayyim.kotoba`, account = `agent-ed25519` / `agent-x25519` / `agent-did`
 //!
 //! Backends:
