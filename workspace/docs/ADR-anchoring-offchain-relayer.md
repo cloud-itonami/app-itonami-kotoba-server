@@ -14,7 +14,7 @@ Kotoba **builds** the on-chain payloads for tamper-evidence anchoring and for
 custody slashing, but **does not submit them on-chain itself**. Transaction
 signing, on-chain settlement, and DID/on-chain origination are
 **etzhayyim-exclusive** (the operating-entity boundary, per the project
-`CLAUDE.md` and ADR-2605231525). The EVM/BTC surface in `kotoba-auth` is
+`AGENTS.md` and ADR-2605231525). The EVM/BTC surface in `kotoba-auth` is
 **read + verify only**.
 
 This ADR does **not** change that boundary — it records it explicitly and gives

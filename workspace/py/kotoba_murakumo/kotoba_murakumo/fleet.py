@@ -75,7 +75,7 @@ class FleetView:
     def litellm_gateway_url(self, *, gateway_node: str = "judah") -> str:
         """Resolve the LiteLLM gateway URL.
 
-        Per CLAUDE.md substrate boundary: the LiteLLM gateway lives on judah.
+        Per AGENTS.md substrate boundary: the LiteLLM gateway lives on judah.
         Use the tailnet address when present because LAN addresses drift across
         reboot/reconnect events.
         """

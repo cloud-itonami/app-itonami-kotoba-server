@@ -1,6 +1,6 @@
 """ISO 20022 message → kotoba EAVT Datom mapping (ingress/interop wire).
 
-Per CLAUDE.md the kotoba Datom log is first-class canonical state and the
+Per AGENTS.md the kotoba Datom log is first-class canonical state and the
 AT-Protocol MST is "ingress/interop wire". This module is the *traditional
 finance* analogue of that wire: it lands an inbound ISO 20022 message as a
 set of append-only EAVT facts so a real-world bank transfer becomes

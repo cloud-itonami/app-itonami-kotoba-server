@@ -69,7 +69,7 @@ notes = "CALL_FOREIGN (0xF) → AgentGateway MCP → Vultr A16 pool (ADR-2605211
 
 adr = "90-docs/adr/2605240001-kotoba-cleanroom-architecture.md"
 
-[files."CLAUDE.md"]
+[files."AGENTS.md"]
 role = "project-rules"
 flags = ["editable"]
 

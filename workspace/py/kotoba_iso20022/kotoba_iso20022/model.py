@@ -1,7 +1,7 @@
 """ISO 20022 payment-message domain model (frozen dataclasses).
 
 A cleanroom object model of the three message definitions kawase-yui needs
-at its interop/ingress boundary (CLAUDE.md: "MST = ingress/interop wire" —
+at its interop/ingress boundary (AGENTS.md: "MST = ingress/interop wire" —
 here the wire is the global ISO 20022 banking network):
 
 - **pain.001** — ``CustomerCreditTransferInitiation`` (a party instructs

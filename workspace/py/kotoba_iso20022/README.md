@@ -6,7 +6,7 @@ message definitions the **kawase-yui (為替結)** cross-border actor
 from the *open published* ISO 20022 standard, with **no proprietary SWIFT
 SDK** and no vendor schema files at runtime.
 
-This is the traditional-finance analogue of the CLAUDE.md substrate rule
+This is the traditional-finance analogue of the AGENTS.md substrate rule
 *"AT-Protocol MST = ingress/interop wire"*: here the wire is the global
 ISO 20022 banking network (the format **SWIFT itself migrated to** via the
 CBPR+ programme), and this module translates between that wire and the

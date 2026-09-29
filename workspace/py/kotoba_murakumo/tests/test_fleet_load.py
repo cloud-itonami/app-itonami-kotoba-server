@@ -24,7 +24,7 @@ def test_load_canonical_fleet() -> None:
 
     assert fleet.name == "etzhayyim-murakumo"
 
-    # 10 tribes documented in CLAUDE.md (Status row + fleet.toml). The minimum
+    # 10 tribes documented in AGENTS.md (Status row + fleet.toml). The minimum
     # we require is that judah is present (LiteLLM gateway lives here).
     assert "judah" in fleet.nodes
     judah = fleet.node("judah")
@@ -41,7 +41,7 @@ def test_load_canonical_fleet() -> None:
     comfy_ep = fleet.endpoint("evo-x2", "comfyui")
     assert comfy_ep.url == "http://100.75.169.8:8188"
 
-    # Gateway URL is judah :4000 per CLAUDE.md.
+    # Gateway URL is judah :4000 per AGENTS.md.
     assert fleet.litellm_gateway_url() == "http://100.113.200.45:4000"
 
 

@@ -3,12 +3,12 @@
 #
 # Usage:
 #   ./scripts/sync-upstream.sh push [commit-message]
-#       Copy source → public repo (excludes CLAUDE.md, deps.toml),
+#       Copy source → public repo (excludes AGENTS.md, deps.toml),
 #       commit and push to etzhayyim/kotoba main.
 #
 #   ./scripts/sync-upstream.sh pull
 #       Fetch latest etzhayyim/kotoba main → apply to this directory
-#       (preserves CLAUDE.md, deps.toml).
+#       (preserves AGENTS.md, deps.toml).
 #
 # Remote required (one-time setup, already done):
 #   git remote add kotoba-upstream git@github.com:etzhayyim/kotoba.git
@@ -23,7 +23,7 @@ WORKTREE_DIR="${TMPDIR:-/tmp}/kotoba-upstream-wt"
 
 # Files/dirs present only in monorepo — never pushed to public upstream
 MONOREPO_ONLY=(
-    "CLAUDE.md"
+    "AGENTS.md"
     "deps.toml"
     ".cargo/"
 )

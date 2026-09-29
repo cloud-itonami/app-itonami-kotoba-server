@@ -33,7 +33,7 @@ class App:
         Caller DID. R0 records it; R1 binds CACAO chain auth.
     gateway_node:
         Tribe name of the LiteLLM gateway node. Default ``"judah"`` per
-        CLAUDE.md.
+        AGENTS.md.
     """
 
     name: str
