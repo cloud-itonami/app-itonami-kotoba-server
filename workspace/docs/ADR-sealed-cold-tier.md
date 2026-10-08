@@ -109,6 +109,53 @@ firehose / realtime / git-http read gates not yet instrumented; purpose is
 free text (Estonia-style coded purposes + legal-basis references when
 enforcement turns on).
 
+### R1 amendment — owner-only receipts (ADR-2610081200 R1, accountability-tiered anonymity), 2026-10-08
+
+Accountability should scale with whose data is touched. When a principal reads
+**their own** graph, the receipt is still written — the audit chain stays
+gap-free and the R3d custody cross-audit still works — but it is visible to the
+owner only, not the operator. Access to someone else's data is unchanged:
+fully receipted and operator-visible.
+
+- **Visibility**: `AccessReceipt.visibility: ReceiptVisibility { Operator
+  (default), OwnerOnly }` (`#[serde(default)]`; a receipt with no
+  `access/visibility` datom — i.e. all pre-amendment data — reads as Operator).
+- **Self-access rule** (`receipt_visibility_for`): graph is
+  `Private { owner_did }`, the accessor DID the gate **cryptographically
+  verified** equals `owner_did`, and `owner_did != operator_did`. Anything else
+  — Public/Authenticated (no owner), anonymous, unverified attribution (Bearer
+  `sub`, decorative CACAO), VC presentations, operator-owned graphs (incl. the
+  default-private fallback for unregistered graphs) — stays Operator
+  (fail-safe toward recording). Using the *verified* DID, not the best-effort
+  `accessor_from_request` attribution, prevents a third party from hiding its
+  read by attaching an owner-issued CACAO it did not authenticate with.
+- **Covered seams**: `require_datomic_read{,_any_operation,_tx_range}` (CACAO
+  grant path → `payload.iss`; `check_read_access` fallback → owner, since its
+  Private branch only passes for an owner-issued, signature-verified CACAO), the
+  four `kotobase.kg.*` reads (`check_read_access`), and `key.requestShare`
+  (verified CACAO `iss` for Private graphs). Not covered (always Operator): the
+  VC-presentation read path and Authenticated-tier key-share attribution.
+- **Owner-only datoms**: `access/graph`, `access/operation`, `access/ts-unix`,
+  `access/visibility "owner-only"` — no `access/accessor-did`, purpose, CACAO
+  evidence CID (the CACAO is not pinned), or client IP / UA / request-id. The
+  visibility datom sits inside the operator-signed audit commit, so
+  `audit.verifyChain` covers it unchanged; `build_receipt_datoms` strips the
+  other fields even if a caller forgets (defence in depth).
+- **Operator listing**: `audit.listReceipts` excludes owner-only receipts.
+- **Custody**: the R3d cross-audit (`key.reportUnreceiptedRelease` →
+  `audit_grant`) projects graph/operation/ts regardless of visibility, so an
+  owner's own `key:requestShare` grant is `Receipted`, never a slashable
+  unreceipted release.
+
+Follow-ups: owner-facing receipt listing (Data Tracker analog) behind an owner
+CACAO gate — not added here because the read gates use inconsistent graph
+scopes (`private/{owner}` vs graph multibase); waive the
+`KOTOBA_REQUIRE_PURPOSE` requirement for self-access (purpose is no longer
+recorded for it); note that owner-only receipts are hidden from the operator
+*listing* but remain plaintext datoms in the operator-hosted audit graph, and
+their timing/graph metadata is still observable — sealing them to the owner's
+key is the next increment.
+
 ---
 
 ## R2a — Receipt-root anchoring payload (2026-06-11)

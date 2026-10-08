@@ -501,6 +501,8 @@ pub async fn kg_entity(
         &graph_cid,
         &visibility,
         "kg:entity",
+        // check_read_access passed → its verified DID (owner for Private).
+        crate::access_receipt::check_read_access_verified_accessor(&visibility),
     )?;
 
     let (lookup_pred, lookup_val) = match (&q.id, &q.qid) {
@@ -677,6 +679,8 @@ pub async fn kg_catalog(
         &graph_cid,
         &visibility,
         "kg:catalog",
+        // check_read_access passed → its verified DID (owner for Private).
+        crate::access_receipt::check_read_access_verified_accessor(&visibility),
     )?;
 
     let quads = current_graph_quads(&state, &graph_cid).await?;
@@ -880,6 +884,8 @@ pub async fn kg_search(
         &graph_cid,
         &visibility,
         "kg:search",
+        // check_read_access passed → its verified DID (owner for Private).
+        crate::access_receipt::check_read_access_verified_accessor(&visibility),
     )?;
 
     // Use inference engine for query embedding when available, matching kg_embed semantics.
@@ -1970,6 +1976,8 @@ pub async fn kg_query(
         &graph_cid,
         &visibility,
         "kg:query",
+        // check_read_access passed → its verified DID (owner for Private).
+        crate::access_receipt::check_read_access_verified_accessor(&visibility),
     )?;
     // Persist emit_cid envelopes only for Public graphs (block.get is
     // unauthenticated — see put_envelope).
