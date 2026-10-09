@@ -1698,6 +1698,10 @@ async fn require_datomic_read_any_operation(
     // The authenticated reader DID (if any) — captured so the ENGI read fee can
     // be charged to it below. Anonymous public reads and operator reads stay free.
     let mut reader_did: Option<String> = None;
+    // ADR-2610081200 R1: the DID the passing gate cryptographically VERIFIED
+    // (drives owner-only receipts). The VC-presentation path stays None
+    // (fail-safe → operator-visible receipt).
+    let mut verified_accessor: Option<String> = None;
     // Authorize via one of: CACAO operation grant, VC presentation, or the
     // graph-visibility fallback gate.
     'authorized: {
@@ -1738,6 +1742,12 @@ async fn require_datomic_read_any_operation(
                 }
                 enforce_datomic_temporal_tx_scope(&payload, as_of, since)?;
                 reader_did = Some(payload.iss.clone());
+                // ADR-2610081200 R1: `payload.iss` is the chain ROOT issuer (the
+                // owner, by the check above), which a third-party delegate's
+                // depth-2 chain also carries. The receipt's reader is the leaf
+                // signer addressed to this server; unknown → operator-visible.
+                verified_accessor =
+                    crate::access_receipt::verified_cacao_reader(cacao_b64, &state.operator_did);
                 break 'authorized;
             }
         }
@@ -1759,6 +1769,11 @@ async fn require_datomic_read_any_operation(
             None,
         )
         .map_err(AccessDenied::into_response)?;
+        verified_accessor = crate::access_receipt::private_read_verified_reader(
+            &visibility,
+            cacao_b64,
+            &state.operator_did,
+        );
     }
     // ADR-sealed-cold-tier R1: purpose policy + access receipt for every
     // authorized non-public datomic read, regardless of which gate passed.
@@ -1769,6 +1784,7 @@ async fn require_datomic_read_any_operation(
         graph,
         &visibility,
         operations.first().copied().unwrap_or("datom:read"),
+        verified_accessor.as_deref(),
     )?;
     // ENGI (縁起) read fee — transfer EN from the authenticated reader → operator
     // (net-zero). No-op when KOTOBA_READ_COST_EN is unset/0, for anonymous public
@@ -1813,6 +1829,8 @@ async fn require_datomic_read_tx_range(
     let graph_scope = graph.to_multibase();
     let visibility = state.graph_visibility(graph).await;
     let mut reader_did: Option<String> = None;
+    // ADR-2610081200 R1: verified accessor DID (see require_datomic_read_any_operation).
+    let mut verified_accessor: Option<String> = None;
     'authorized: {
         if cacao_b64.is_some() {
             if let Ok(payload) = verify_datomic_cacao_payload_with_any_operation(
@@ -1823,6 +1841,12 @@ async fn require_datomic_read_tx_range(
             ) {
                 enforce_datomic_range_tx_scope(&payload, start, end)?;
                 reader_did = Some(payload.iss.clone());
+                // ADR-2610081200 R1: `payload.iss` is the chain ROOT issuer (the
+                // owner, by the check above), which a third-party delegate's
+                // depth-2 chain also carries. The receipt's reader is the leaf
+                // signer addressed to this server; unknown → operator-visible.
+                verified_accessor =
+                    crate::access_receipt::verified_cacao_reader(cacao_b64, &state.operator_did);
                 break 'authorized;
             }
         }
@@ -1854,6 +1878,11 @@ async fn require_datomic_read_tx_range(
             None,
         )
         .map_err(AccessDenied::into_response)?;
+        verified_accessor = crate::access_receipt::private_read_verified_reader(
+            &visibility,
+            cacao_b64,
+            &state.operator_did,
+        );
     }
     // ADR-sealed-cold-tier R1: purpose policy + access receipt (see
     // require_datomic_read_any_operation).
@@ -1864,6 +1893,7 @@ async fn require_datomic_read_tx_range(
         graph,
         &visibility,
         operations.first().copied().unwrap_or("datom:read"),
+        verified_accessor.as_deref(),
     )?;
     // ENGI (縁起) read fee (see require_datomic_read_any_operation).
     charge_engi_read_fee(state, reader_did.as_deref()).await

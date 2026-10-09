@@ -29,6 +29,7 @@ HTTP against a live server. Full design + rationale:
 |-------|----------|-----------|-------|
 | **R0** | Only ciphertext leaves the node | `SealedBlockStore` — AES-256-GCM `KSB1` envelope per block, stored under `sealed_cid = H(envelope)` so Kubo's CID-recompute still works; deterministic content-derived nonce; `KOTOBA_BLOCK_KEY` to enable | `kotoba-store` |
 | **R1** | Who / what / why / when is recorded | Access receipts — every authorized non-public read (and key release) emits a datom (`access/{graph,accessor-did,operation,purpose,ts-unix}`) into `kotoba/audit/access-receipts/v1`; `x-kotoba-purpose` header; batched background writer | `kotoba-server` `access_receipt` |
+| **R1′** (ADR-2610081200 R1) | Accountability scales with whose data it is | Owner self-access (the verified READER — the signer of the leaf CACAO addressed to this server — is the Private graph owner ≠ operator; being the delegation issuer is not enough, and an undeterminable reader stays operator-visible) still writes a receipt, but **owner-only**: only `access/{graph,operation,ts-unix}` + `access/visibility "owner-only"` (no accessor / purpose / client metadata / CACAO evidence); hidden from `audit.listReceipts`; still in the signed audit chain and still matched by the R3d cross-audit. Third-party access unchanged. See ADR-sealed-cold-tier "R1 amendment" | `kotoba-server` `access_receipt` |
 | **R2a** | The operator can't silently rewrite history | `audit.anchorPayload` — `AnchorBridge.commitRoot` calldata committing the audit-graph head to Base (relayer submits; KSI analog) | `kotoba-server` + `kotoba-evm` |
 | **R2b** | Neither party can deny it | Author-signed CommitDag — `DistributedDatomCommit.author_sig` (Ed25519 over a canonical payload); receipts carry `access/cacao-cid` (requester-signed evidence). *The Journal is deprecated; the CommitDag is the canonical chain.* | `kotoba-datomic` |
 | **R2c** | Tampered history can't be imported, and is checkable in one call | `commit_import_check` gates the merge path (`Invalid` always rejects; `Unsigned`/`Unverifiable` under `KOTOBA_REQUIRE_SIGNED_COMMITS`); `audit.verifyChain` walks the audit chain reporting per-commit verdicts | `kotoba-auth` + `kotoba-server` |
@@ -47,7 +48,9 @@ Running against a server (`KOTOBA_IPFS=off KOTOBA_NO_SWARM=1 kotoba serve`):
 3. `key.depositShare` → installed (operator-gated; non-operator → **401**).
 4. `key.requestShare` → custodian writes a receipt, releases a **64-byte
    Ed25519-signed** grant with a 93-byte HPKE share.
-5. `audit.listReceipts` → the `key:requestShare` receipt is present.
+5. `audit.listReceipts` → the `key:requestShare` receipt is present (when the
+   requester is not the graph owner; an owner's self-request leaves an
+   owner-only receipt that the operator listing hides but step 7 still finds).
 6. `audit.verifyChain` → `depth 1, valid 1, invalid 0, ok:true`.
 7. `key.reportUnreceiptedRelease`: genuine grant → `receipted`; unsigned grant
    → **400**; a validly self-signed grant with no receipt → **`warranted:true`**,

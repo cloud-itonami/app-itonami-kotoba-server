@@ -10,8 +10,15 @@
 use crate::protocol::GrantedShare;
 
 /// The slice of an access receipt this audit needs. Built by the caller from
-/// the audit graph's datoms (`access/graph`, `access/accessor-did`,
-/// `access/operation`, `access/ts-unix`).
+/// the audit graph's datoms (`access/graph`, `access/operation`,
+/// `access/ts-unix`).
+///
+/// Deliberately visibility-agnostic (ADR-2610081200 R1): an OWNER-ONLY receipt
+/// (owner self-access — no accessor DID / purpose in plaintext) carries exactly
+/// these three fields, so it covers an owner's own `key:requestShare` release
+/// just like an operator-visible receipt does. Callers MUST NOT filter
+/// owner-only receipts out of the slice, or an owner's legitimate self-request
+/// would be misreported as a slashable unreceipted release.
 #[derive(Debug, Clone)]
 pub struct ReceiptRecord {
     pub graph_mb: String,
@@ -108,6 +115,18 @@ mod tests {
             audit_grant(&g, &receipts, 5),
             AuditVerdict::UnreceiptedRelease
         );
+    }
+
+    #[test]
+    fn owner_only_shaped_receipt_covers_owner_self_release() {
+        // ADR-2610081200 R1: an owner-only receipt has no accessor, only
+        // graph/operation/ts — that is all the match needs.
+        let g = grant("bOwnGraph", 5000);
+        let receipts = vec![
+            receipt("bOtherGraph", "datom:q", 5000),
+            receipt("bOwnGraph", "key:requestShare", 4990),
+        ];
+        assert_eq!(audit_grant(&g, &receipts, 120), AuditVerdict::Receipted);
     }
 
     #[test]

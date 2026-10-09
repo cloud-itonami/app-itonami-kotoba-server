@@ -22,7 +22,7 @@ use kotoba_core::named_graph::GraphVisibility;
 use kotoba_custody::{handle_key_share_request, CustodianShare, KeyShareRequest, KeyShareResponse};
 use serde::{Deserialize, Serialize};
 
-use crate::access_receipt::{pin_cacao_evidence, record_receipt, AccessReceipt};
+use crate::access_receipt::{pin_cacao_evidence, record_receipt, AccessReceipt, ReceiptVisibility};
 use crate::server::KotobaState;
 
 pub const NSID_KEY_REQUEST_SHARE: &str = "com.etzhayyim.apps.kotoba.key.requestShare";
@@ -207,24 +207,48 @@ fn authorize_share_release(
     }
 
     // Receipt — same shape as a read receipt, operation = key:requestShare.
-    let cacao_cid = pin_cacao_evidence(state, req.cacao_b64.as_deref());
-    record_receipt(
-        state,
-        AccessReceipt {
+    // ADR-2610081200 R1: owner self-access → an owner-only receipt, which still
+    // carries graph / operation / ts so the R3d cross-audit (`audit_grant`)
+    // keeps matching the custodian's signed grant against it. `accessor_did`
+    // (the verified CACAO issuer, kept for the operator-visible receipt as
+    // before) is not enough: self-access needs the verified READER — the leaf
+    // signer addressed to this server — to be the owner. Authenticated
+    // attribution comes from an unverified parse → never self-access.
+    let verified_reader = crate::access_receipt::private_read_verified_reader(
+        visibility,
+        req.cacao_b64.as_deref(),
+        &state.operator_did,
+    );
+    let verified_accessor = verified_reader.as_deref();
+    let ts_unix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let receipt = match crate::access_receipt::receipt_visibility_for(
+        visibility,
+        verified_accessor,
+        &state.operator_did,
+    ) {
+        ReceiptVisibility::OwnerOnly => AccessReceipt {
+            graph_mb: graph_scope,
+            operation: "key:requestShare".to_string(),
+            ts_unix,
+            ..Default::default()
+        }
+        .into_owner_only(),
+        ReceiptVisibility::Operator => AccessReceipt {
             graph_mb: graph_scope,
             accessor_did,
             operation: "key:requestShare".to_string(),
             purpose,
-            ts_unix: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-            cacao_cid,
+            ts_unix,
+            cacao_cid: pin_cacao_evidence(state, req.cacao_b64.as_deref()),
             // Custody-protocol seam, not a plain HTTP read: no edge-forwarded
             // network metadata (ADR-2606131600 P0).
             ..Default::default()
         },
-    );
+    };
+    record_receipt(state, receipt);
     Ok(())
 }
 
@@ -462,4 +486,83 @@ fn receipt_records_from_quads(
             })
         })
         .collect()
+}
+
+#[cfg(test)]
+mod owner_only_custody_tests {
+    use super::*;
+    use crate::access_receipt::{receipts_graph_cid, write_receipt_batch};
+
+    /// ADR-2610081200 R1: an owner self `key:requestShare` leaves an OWNER-ONLY
+    /// receipt (no accessor DID in plaintext), and the R3d cross-audit still
+    /// finds it — the custodian's signed grant is `Receipted`, not slashable.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn owner_self_request_share_grant_is_receipted_via_owner_only_receipt() {
+        std::env::set_var("KOTOBA_IPFS", "off");
+        let state = KotobaState::new(None).expect("state");
+        let owner = "did:key:zCustodyOwner";
+        let graph = KotobaCid::from_bytes(b"owner-only-custody-graph");
+        let visibility = GraphVisibility::Private {
+            owner_did: owner.into(),
+        };
+        // Classification as the key_share seam does it (verified CACAO iss == owner).
+        assert_eq!(
+            crate::access_receipt::receipt_visibility_for(
+                &visibility,
+                Some(owner),
+                &state.operator_did
+            ),
+            ReceiptVisibility::OwnerOnly
+        );
+        let ts = 1_780_200_000;
+        let receipt = AccessReceipt {
+            graph_mb: graph.to_multibase(),
+            accessor_did: Some(owner.into()),
+            operation: "key:requestShare".into(),
+            purpose: Some("restore my key".into()),
+            ts_unix: ts,
+            ..Default::default()
+        }
+        .into_owner_only();
+        write_receipt_batch(&state, vec![receipt]).await;
+
+        let quads = state
+            .quad_store
+            .quads_by_predicate_prefix(Some(&receipts_graph_cid()), "access/")
+            .await;
+        assert!(
+            quads
+                .iter()
+                .all(|q| q.predicate != "access/accessor-did" && q.predicate != "access/purpose"),
+            "owner-only receipt must not record accessor/purpose in plaintext"
+        );
+        assert!(quads.iter().any(|q| q.predicate == "access/visibility"));
+
+        let records = receipt_records_from_quads(&quads);
+        let grant = kotoba_custody::GrantedShare {
+            custodian_did: state.operator_did.clone(),
+            index: 1,
+            threshold: 2,
+            epoch: 1,
+            deal_id: vec![1],
+            graph_cid_mb: graph.to_multibase(),
+            requester_x25519_pk: vec![7u8; 32],
+            ts_unix: ts + 2,
+            sealed_for_requester: vec![0u8; 60],
+            grant_sig: None,
+        };
+        assert_eq!(
+            kotoba_custody::audit_grant(&grant, &records, 120),
+            kotoba_custody::AuditVerdict::Receipted
+        );
+        // Control: a grant for another graph is still unreceipted.
+        let other = kotoba_custody::GrantedShare {
+            graph_cid_mb: KotobaCid::from_bytes(b"x").to_multibase(),
+            ..grant
+        };
+        assert_eq!(
+            kotoba_custody::audit_grant(&other, &records, 120),
+            kotoba_custody::AuditVerdict::UnreceiptedRelease
+        );
+    }
 }

@@ -29,6 +29,16 @@
 //! races), and amortises the distributed-commit cost — the lesson from the
 //! request-fingerprint middleware's per-request commit pileup.
 //!
+//! ADR-2610081200 R1 (accountability-tiered anonymity): when the gate has
+//! VERIFIED that the accessor is the owner of the Private graph being read
+//! (and that owner is not the operator), the receipt is still written — so the
+//! hash-chained audit log and the custody cross-audit (`audit_grant`) keep
+//! working — but it is [`ReceiptVisibility::OwnerOnly`]: only `access/graph`,
+//! `access/operation`, `access/ts-unix` and `access/visibility "owner-only"`
+//! are recorded (no accessor DID, purpose, CACAO evidence or client network
+//! metadata), and the operator listing (`audit.listReceipts`) hides it. Reads
+//! of someone else's data stay fully receipted and operator-visible.
+//!
 //! Enforcement rollout: receipts are ALWAYS recorded for Authenticated/Private
 //! reads at the instrumented seams. The `x-kotoba-purpose` header becomes
 //! REQUIRED for Private-graph reads only when `KOTOBA_REQUIRE_PURPOSE` is
@@ -44,7 +54,7 @@ use axum::Json;
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use kotoba_core::cid::KotobaCid;
 use kotoba_core::named_graph::GraphVisibility;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::server::KotobaState;
 
@@ -63,7 +73,113 @@ pub fn receipts_graph_cid() -> KotobaCid {
     KotobaCid::from_bytes(b"kotoba/audit/access-receipts/v1")
 }
 
-#[derive(Debug, Clone, Default)]
+/// Who may see a receipt (ADR-2610081200 R1 — accountability-tiered anonymity).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ReceiptVisibility {
+    /// Full receipt, listed to the operator (`audit.listReceipts`). The default,
+    /// and what every receipt WITHOUT an `access/visibility` datom reads as.
+    #[default]
+    Operator,
+    /// Owner self-access: minimal plaintext (graph / operation / ts), hidden
+    /// from the operator listing. Still in the audit graph's commit chain and
+    /// still matched by the custody cross-audit.
+    OwnerOnly,
+}
+
+impl ReceiptVisibility {
+    /// Value of the `access/visibility` datom (only emitted for `OwnerOnly`).
+    pub const OWNER_ONLY_TAG: &'static str = "owner-only";
+}
+
+/// Classify a receipt. `verified_accessor` is the DID the read gate actually
+/// cryptographically verified (NOT a best-effort attribution such as an
+/// unverified Bearer `sub` or a decorative CACAO), so a third party can never
+/// get its access hidden by merely CLAIMING to be the owner.
+///
+/// Self-access = Private graph whose `owner_did` equals the verified accessor.
+/// Fail-safe toward recording: Public/Authenticated graphs (no owner),
+/// anonymous/unverified accessors, and graphs owned by the operator itself
+/// (hiding the operator's own reads from the operator protects no one) all stay
+/// [`ReceiptVisibility::Operator`].
+pub(crate) fn receipt_visibility_for(
+    visibility: &GraphVisibility,
+    verified_accessor: Option<&str>,
+    operator_did: &str,
+) -> ReceiptVisibility {
+    match (visibility, verified_accessor) {
+        (GraphVisibility::Private { owner_did }, Some(acc))
+            if !owner_did.is_empty() && acc == owner_did && owner_did != operator_did =>
+        {
+            ReceiptVisibility::OwnerOnly
+        }
+        _ => ReceiptVisibility::Operator,
+    }
+}
+
+/// ADR-2610081200 R1 — WHO IS READING, as established by a CACAO that the read
+/// gate has already accepted (signature, capability, graph scope, audience,
+/// owner binding).
+///
+/// Being the delegation's *issuer* is not enough. Every gate reports the chain
+/// ROOT issuer (for a Private graph that is always the owner), and an owner may
+/// delegate a read to a third party: a depth-2 chain `owner → delegate`,
+/// `delegate → this server`. The reader is the party that signed the LEAF
+/// invocation presented to this server, and only when that leaf is addressed
+/// to this server (`aud == server_aud`) or to the signer itself. A leaf
+/// addressed to anyone else is a delegation to that party, so the reader is
+/// not established and this returns `None`.
+///
+/// Fail closed: missing, oversized, undecodable or unparseable input, an empty
+/// `iss`, or an empty / foreign `aud` all return `None`, which keeps the
+/// receipt operator-visible. Identity is compared by exact DID; keys an owner
+/// controls under another DID are not treated as the owner (that would need a
+/// verified DID-document link and is left operator-visible).
+///
+/// Call only AFTER the gate accepted the same `cacao_b64`: this re-parses those
+/// bytes and relies on the gate having verified the leaf signature.
+pub(crate) fn verified_cacao_reader(cacao_b64: Option<&str>, server_aud: &str) -> Option<String> {
+    const MAX_CACAO_B64_LEN: usize = 8 * 1024;
+    let b64 = cacao_b64?;
+    if b64.is_empty() || b64.len() > MAX_CACAO_B64_LEN {
+        return None;
+    }
+    let cbor = B64.decode(b64).ok()?;
+    let leaf = match kotoba_auth::Cacao::from_cbor(&cbor) {
+        Ok(single) => single,
+        Err(_) => kotoba_auth::DelegationChain::from_cbor_chain(&cbor)
+            .ok()?
+            .chain
+            .pop()?,
+    };
+    let iss = leaf.p.iss;
+    let aud = leaf.p.aud;
+    if iss.is_empty() || aud.is_empty() {
+        return None;
+    }
+    if aud == server_aud || aud == iss {
+        Some(iss)
+    } else {
+        None
+    }
+}
+
+/// The verified reader of a Private-graph read that passed
+/// `graph_auth::check_read_access` (or the datomic CACAO grant path) with
+/// `cacao_b64`. Public / Authenticated graphs verify no reader → `None`.
+/// See [`verified_cacao_reader`].
+pub(crate) fn private_read_verified_reader(
+    visibility: &GraphVisibility,
+    cacao_b64: Option<&str>,
+    server_aud: &str,
+) -> Option<String> {
+    match visibility {
+        GraphVisibility::Private { .. } => verified_cacao_reader(cacao_b64, server_aud),
+        _ => None,
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AccessReceipt {
     pub graph_mb: String,
     pub accessor_did: Option<String>,
@@ -82,6 +198,24 @@ pub struct AccessReceipt {
     pub client_ip: Option<String>,
     pub user_agent: Option<String>,
     pub request_id: Option<String>,
+    /// ADR-2610081200 R1. `#[serde(default)]` → pre-R1 data reads as Operator.
+    #[serde(default)]
+    pub visibility: ReceiptVisibility,
+}
+
+impl AccessReceipt {
+    /// Reduce to an owner-only receipt: keep graph / operation / ts (custody
+    /// cross-audit + chain integrity), drop everything that would tell the
+    /// operator more than "the owner touched their own graph".
+    pub fn into_owner_only(self) -> Self {
+        AccessReceipt {
+            graph_mb: self.graph_mb,
+            operation: self.operation,
+            ts_unix: self.ts_unix,
+            visibility: ReceiptVisibility::OwnerOnly,
+            ..Default::default()
+        }
+    }
 }
 
 /// Extract + sanitise the declared purpose from `x-kotoba-purpose`.
@@ -199,6 +333,10 @@ fn purpose_violation(visibility: &GraphVisibility, purpose: Option<&str>, enforc
 /// `accessor_did` (anonymous), but still record graph / operation / ts and any
 /// forwarded client IP / user-agent / request-id. The purpose-required policy
 /// remains Private-only.
+///
+/// `verified_accessor` is the DID the caller's gate cryptographically verified
+/// (see [`receipt_visibility_for`]); when it is the Private graph's owner the
+/// receipt is recorded [`ReceiptVisibility::OwnerOnly`] (ADR-2610081200 R1).
 pub(crate) fn enforce_and_record(
     state: &KotobaState,
     headers: &HeaderMap,
@@ -206,6 +344,7 @@ pub(crate) fn enforce_and_record(
     graph: &KotobaCid,
     visibility: &GraphVisibility,
     operation: &str,
+    verified_accessor: Option<&str>,
 ) -> Result<(), (StatusCode, String)> {
     let purpose = purpose_from_headers(headers);
     if purpose_violation(visibility, purpose.as_deref(), require_purpose_enabled()) {
@@ -217,32 +356,40 @@ pub(crate) fn enforce_and_record(
             ),
         ));
     }
-    // Pin the presented CACAO bytes as requester-signed evidence (only when
-    // they actually parse — garbage would not have passed a Private gate).
-    let cacao_cid = cacao_b64
-        .and_then(|b64| B64.decode(b64).ok())
-        .filter(|cbor| kotoba_auth::Cacao::from_cbor(cbor).is_ok())
-        .map(|cbor| {
-            let cid = KotobaCid::from_bytes(&cbor);
-            if let Err(e) = state.block_store.put(&cid, &cbor) {
-                tracing::warn!(err = %e, "cacao evidence block put failed");
+    let ts_unix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let receipt = match receipt_visibility_for(visibility, verified_accessor, &state.operator_did) {
+        // ADR-2610081200 R1: owner self-access — minimal receipt. The CACAO is
+        // NOT pinned as evidence and no client metadata / purpose is read into
+        // the record (nothing the operator should learn).
+        ReceiptVisibility::OwnerOnly => AccessReceipt {
+            graph_mb: graph.to_multibase(),
+            operation: operation.to_string(),
+            ts_unix,
+            ..Default::default()
+        }
+        .into_owner_only(),
+        ReceiptVisibility::Operator => {
+            // Pin the presented CACAO bytes as requester-signed evidence (only
+            // when they actually parse — garbage would not have passed a
+            // Private gate).
+            let cacao_cid = pin_cacao_evidence(state, cacao_b64);
+            let (client_ip, user_agent, request_id) = client_meta_from_request(headers);
+            AccessReceipt {
+                graph_mb: graph.to_multibase(),
+                accessor_did: accessor_from_request(headers, cacao_b64, visibility),
+                operation: operation.to_string(),
+                purpose,
+                ts_unix,
+                cacao_cid,
+                client_ip,
+                user_agent,
+                request_id,
+                visibility: ReceiptVisibility::Operator,
             }
-            cid.to_multibase()
-        });
-    let (client_ip, user_agent, request_id) = client_meta_from_request(headers);
-    let receipt = AccessReceipt {
-        graph_mb: graph.to_multibase(),
-        accessor_did: accessor_from_request(headers, cacao_b64, visibility),
-        operation: operation.to_string(),
-        purpose,
-        ts_unix: SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs(),
-        cacao_cid,
-        client_ip,
-        user_agent,
-        request_id,
+        }
     };
     if state.receipt_tx.send(receipt).is_err() {
         // Writer task gone (shutdown or never spawned outside a runtime).
@@ -300,6 +447,10 @@ fn receipt_cid(r: &AccessReceipt, seq: u64) -> KotobaCid {
     buf.extend_from_slice(&r.ts_unix.to_le_bytes());
     buf.push(b'|');
     buf.extend_from_slice(&seq.to_le_bytes());
+    if r.visibility == ReceiptVisibility::OwnerOnly {
+        buf.push(b'|');
+        buf.extend_from_slice(ReceiptVisibility::OWNER_ONLY_TAG.as_bytes());
+    }
     KotobaCid::from_bytes(&buf)
 }
 
@@ -328,6 +479,19 @@ pub(crate) fn build_receipt_datoms(
             tx_cid.clone(),
         ),
     ];
+    // ADR-2610081200 R1: an owner-only receipt carries ONLY graph / operation /
+    // ts + the visibility marker — enforced here too (defence in depth), even
+    // if a caller forgot `into_owner_only`. The marker datom is part of the
+    // commit, so the audit chain's author_sig covers the visibility claim.
+    if r.visibility == ReceiptVisibility::OwnerOnly {
+        datoms.push(kotoba_datomic::Datom::assert(
+            subject.clone(),
+            "access/visibility".to_string(),
+            kotoba_edn::EdnValue::string(ReceiptVisibility::OWNER_ONLY_TAG),
+            tx_cid.clone(),
+        ));
+        return datoms;
+    }
     if let Some(did) = &r.accessor_did {
         datoms.push(kotoba_datomic::Datom::assert(
             subject.clone(),
@@ -484,7 +648,7 @@ pub fn spawn_receipt_writer(state: Arc<KotobaState>) {
 
 // ── audit.listReceipts XRPC ──────────────────────────────────────────────────
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 pub struct AuditListQuery {
     /// Filter: target graph multibase CID.
     pub graph: Option<String>,
@@ -498,7 +662,8 @@ pub struct AuditListQuery {
 ///
 /// Operator-gated in R1 (the owner-facing CACAO gate — Estonia's citizen Data
 /// Tracker analog — lands with per-graph keys, where owner != operator becomes
-/// the common case).
+/// the common case). ADR-2610081200 R1: owner-only receipts (owner self-access)
+/// are EXCLUDED from this operator listing.
 pub async fn audit_list_receipts(
     State(state): State<Arc<KotobaState>>,
     headers: HeaderMap,
@@ -506,14 +671,29 @@ pub async fn audit_list_receipts(
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     crate::graph_auth::require_operator_auth(&headers, &state.operator_did)?;
 
-    let limit = q.limit.unwrap_or(100).min(1000);
     let graph = receipts_graph_cid();
     let quads = state
         .quad_store
         .quads_by_predicate_prefix(Some(&graph), "access/")
         .await;
+    let receipts = operator_visible_receipts(&quads, &q);
 
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "count": receipts.len(),
+        "receipts": receipts,
+    })))
+}
+
+/// Project audit-graph quads into the operator listing: group by receipt
+/// subject, DROP owner-only receipts (ADR-2610081200 R1), apply the
+/// graph/accessor filters, newest first, truncated to the limit.
+pub(crate) fn operator_visible_receipts(
+    quads: &[kotoba_query::quad::LegacyQuad],
+    q: &AuditListQuery,
+) -> Vec<serde_json::Value> {
     use std::collections::HashMap;
+    let limit = q.limit.unwrap_or(100).min(1000);
     let mut by_subject: HashMap<String, serde_json::Map<String, serde_json::Value>> =
         HashMap::new();
     for quad in quads {
@@ -533,6 +713,7 @@ pub async fn audit_list_receipts(
             "access/client-ip" => "clientIp",
             "access/user-agent" => "userAgent",
             "access/request-id" => "requestId",
+            "access/visibility" => "visibility",
             _ => continue,
         };
         entry.insert(key.to_string(), value);
@@ -541,6 +722,12 @@ pub async fn audit_list_receipts(
     let mut receipts: Vec<serde_json::Value> = by_subject
         .into_iter()
         .filter(|(_, fields)| {
+            // ADR-2610081200 R1: owner self-access is not the operator's business.
+            if fields.get("visibility").and_then(|v| v.as_str())
+                == Some(ReceiptVisibility::OWNER_ONLY_TAG)
+            {
+                return false;
+            }
             if let Some(g) = &q.graph {
                 if fields.get("graph").and_then(|v| v.as_str()) != Some(g.as_str()) {
                     return false;
@@ -561,12 +748,7 @@ pub async fn audit_list_receipts(
     receipts
         .sort_by_key(|r| std::cmp::Reverse(r.get("tsUnix").and_then(|v| v.as_i64()).unwrap_or(0)));
     receipts.truncate(limit);
-
-    Ok(Json(serde_json::json!({
-        "ok": true,
-        "count": receipts.len(),
-        "receipts": receipts,
-    })))
+    receipts
 }
 
 // ── audit.verifyChain XRPC (R2b — operator-side tamper check) ────────────────
@@ -1135,6 +1317,413 @@ mod signed_commit_tests {
                     verdict,
                     kotoba_auth::CommitSigVerdict::Unverifiable(_)
                 ));
+            }
+            depth += 1;
+            cursor = commit.prev.clone();
+        }
+        assert_eq!(depth, 2, "two batches → two commits");
+    }
+}
+
+// ── ADR-2610081200 R1 — owner-only receipts (accountability-tiered anonymity) ─
+
+#[cfg(test)]
+mod owner_only_tests {
+    use super::*;
+
+    const OWNER: &str = "did:key:zGraphOwner";
+    const OTHER: &str = "did:key:zSomeoneElse";
+
+    fn private_owned_by(did: &str) -> GraphVisibility {
+        GraphVisibility::Private {
+            owner_did: did.into(),
+        }
+    }
+
+    fn bearer(did: &str) -> HeaderMap {
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        let payload =
+            URL_SAFE_NO_PAD.encode(format!(r#"{{"sub":"{did}","exp":9999999999}}"#).as_bytes());
+        let mut h = HeaderMap::new();
+        h.insert(
+            axum::http::header::AUTHORIZATION,
+            format!("Bearer eyJhbGciOiJub25lIn0.{payload}.sig")
+                .parse()
+                .unwrap(),
+        );
+        h.insert(PURPOSE_HEADER, "reading my own notes".parse().unwrap());
+        h.insert("x-kotoba-client-ip", "203.0.113.9".parse().unwrap());
+        h.insert("user-agent", "owner-app/1.0".parse().unwrap());
+        h
+    }
+
+    fn state() -> KotobaState {
+        std::env::set_var("KOTOBA_IPFS", "off");
+        KotobaState::new(None).expect("state")
+    }
+
+    /// Run enforce_and_record and pull the enqueued receipt off the channel.
+    fn record_one(
+        state: &KotobaState,
+        headers: &HeaderMap,
+        visibility: &GraphVisibility,
+        verified: Option<&str>,
+    ) -> AccessReceipt {
+        let mut rx = state.receipt_rx.lock().unwrap().take().expect("rx");
+        let graph = KotobaCid::from_bytes(b"owner-only-test-graph");
+        enforce_and_record(
+            state, headers, None, &graph, visibility, "datom:q", verified,
+        )
+        .expect("record");
+        let r = rx.try_recv().expect("receipt enqueued");
+        *state.receipt_rx.lock().unwrap() = Some(rx);
+        r
+    }
+
+    fn attrs(r: &AccessReceipt) -> Vec<String> {
+        let subject = receipt_cid(r, 1);
+        build_receipt_datoms(r, &subject, &KotobaCid::from_bytes(b"tx"))
+            .into_iter()
+            .map(|d| d.a)
+            .collect()
+    }
+
+    #[test]
+    fn visibility_classification() {
+        let op = "did:key:zOperator";
+        assert_eq!(
+            receipt_visibility_for(&private_owned_by(OWNER), Some(OWNER), op),
+            ReceiptVisibility::OwnerOnly
+        );
+        assert_eq!(
+            receipt_visibility_for(&private_owned_by(OWNER), Some(OTHER), op),
+            ReceiptVisibility::Operator,
+            "someone else's data stays operator-visible"
+        );
+        assert_eq!(
+            receipt_visibility_for(&private_owned_by(OWNER), None, op),
+            ReceiptVisibility::Operator,
+            "anonymous / unverified is never self-access"
+        );
+        assert_eq!(
+            receipt_visibility_for(&private_owned_by(op), Some(op), op),
+            ReceiptVisibility::Operator,
+            "operator-owned graphs: hiding from the operator protects no one"
+        );
+        for v in [GraphVisibility::Public, GraphVisibility::Authenticated] {
+            assert_eq!(
+                receipt_visibility_for(&v, Some(OWNER), op),
+                ReceiptVisibility::Operator,
+                "no owner to bind to"
+            );
+        }
+        assert_eq!(ReceiptVisibility::default(), ReceiptVisibility::Operator);
+    }
+
+    // ── Reader binding (who is READING, not who issued the delegation) ──────
+
+    const SERVER: &str = "did:key:zOperator";
+    const DELEGATE: &str = "did:key:zThirdPartyDelegate";
+
+    /// An (unsigned) CACAO `iss → aud`. `verified_cacao_reader` runs only after
+    /// the gate verified the signatures, so it does not check them itself.
+    fn cacao(iss: &str, aud: &str) -> kotoba_auth::Cacao {
+        kotoba_auth::Cacao {
+            h: kotoba_auth::CacaoHeader {
+                t: "caip122".into(),
+            },
+            p: kotoba_auth::CacaoPayload {
+                iss: iss.into(),
+                aud: aud.into(),
+                issued_at: "2026-10-01T00:00:00Z".into(),
+                expiry: Some("2030-01-01T00:00:00Z".into()),
+                nonce: "n".into(),
+                domain: "kotoba.test".into(),
+                statement: None,
+                version: "1".into(),
+                resources: vec!["kotoba://op/datom:read".into()],
+            },
+            s: kotoba_auth::CacaoSig {
+                t: "EdDSA".into(),
+                s: String::new(),
+            },
+        }
+    }
+
+    fn b64_single(c: &kotoba_auth::Cacao) -> String {
+        let mut buf = Vec::new();
+        ciborium::into_writer(c, &mut buf).unwrap();
+        B64.encode(buf)
+    }
+
+    fn b64_chain(chain: &[kotoba_auth::Cacao]) -> String {
+        let mut buf = Vec::new();
+        ciborium::into_writer(&chain.to_vec(), &mut buf).unwrap();
+        B64.encode(buf)
+    }
+
+    fn classify(cacao_b64: Option<&str>) -> (Option<String>, ReceiptVisibility) {
+        let vis = private_owned_by(OWNER);
+        let reader = private_read_verified_reader(&vis, cacao_b64, SERVER);
+        let v = receipt_visibility_for(&vis, reader.as_deref(), SERVER);
+        (reader, v)
+    }
+
+    /// (a) The owner signs the invocation presented to this server → the owner
+    /// is the reader → owner-only receipt, recorded but hidden from the operator.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn reader_binding_owner_reading_own_graph_is_owner_only() {
+        let b64 = b64_single(&cacao(OWNER, SERVER));
+        let (reader, v) = classify(Some(&b64));
+        assert_eq!(reader.as_deref(), Some(OWNER));
+        assert_eq!(v, ReceiptVisibility::OwnerOnly);
+        // Self-addressed (aud = the owner's own DID) is also the owner reading.
+        assert_eq!(
+            classify(Some(&b64_single(&cacao(OWNER, OWNER)))).1,
+            ReceiptVisibility::OwnerOnly
+        );
+
+        let state = state();
+        let r = record_one(
+            &state,
+            &bearer(OWNER),
+            &private_owned_by(OWNER),
+            reader.as_deref(),
+        );
+        assert_eq!(
+            r.visibility,
+            ReceiptVisibility::OwnerOnly,
+            "a receipt is still written"
+        );
+        let subject = receipt_cid(&r, 1);
+        let quads: Vec<_> = build_receipt_datoms(&r, &subject, &KotobaCid::from_bytes(b"tx"))
+            .into_iter()
+            .collect();
+        assert!(quads.iter().any(|d| d.a == "access/visibility"));
+    }
+
+    /// (b) A third party reads with a delegation the owner issued. Every gate
+    /// reports the chain ROOT issuer (the owner), but the reader is the
+    /// delegate → operator-visible, with the same fields as before R1.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn reader_binding_third_party_with_owner_delegation_stays_operator_visible() {
+        // Depth-2 chain: owner → delegate, delegate → this server.
+        let chain = b64_chain(&[cacao(OWNER, DELEGATE), cacao(DELEGATE, SERVER)]);
+        let (reader, v) = classify(Some(&chain));
+        assert_eq!(
+            reader.as_deref(),
+            Some(DELEGATE),
+            "reader is the leaf signer"
+        );
+        assert_eq!(v, ReceiptVisibility::Operator);
+        // Single owner-issued CACAO whose audience is the third party: a
+        // delegation to them, so the reader is not established → recorded.
+        let delegated = b64_single(&cacao(OWNER, DELEGATE));
+        assert_eq!(
+            classify(Some(&delegated)),
+            (None, ReceiptVisibility::Operator)
+        );
+
+        let state = state();
+        // The issuer-based attribution the gate used to hand over is the owner;
+        // the receipt must not become owner-only because of it.
+        let r = record_one(
+            &state,
+            &bearer(DELEGATE),
+            &private_owned_by(OWNER),
+            reader.as_deref(),
+        );
+        assert_eq!(r.visibility, ReceiptVisibility::Operator);
+        assert_eq!(r.purpose.as_deref(), Some("reading my own notes"));
+        assert_eq!(r.client_ip.as_deref(), Some("203.0.113.9"));
+        assert!(r.accessor_did.is_some(), "attribution recorded as before");
+        assert!(!attrs(&r).iter().any(|a| a == "access/visibility"));
+    }
+
+    /// (c) The reader cannot be established → fail closed: recorded, operator-visible.
+    #[test]
+    fn reader_binding_undeterminable_reader_is_recorded() {
+        let undeterminable: Vec<Option<String>> = vec![
+            None,
+            Some(String::new()),
+            Some("!!not base64!!".into()),
+            Some(B64.encode(b"not cbor")),
+            Some("A".repeat(9 * 1024)),
+            Some(b64_single(&cacao(OWNER, ""))),
+            Some(b64_single(&cacao("", SERVER))),
+            Some(b64_single(&cacao(OWNER, "did:key:zSomeOtherServer"))),
+        ];
+        for b64 in undeterminable {
+            assert_eq!(
+                classify(b64.as_deref()),
+                (None, ReceiptVisibility::Operator),
+                "{b64:?}"
+            );
+        }
+        // Non-private graphs never establish a self-access reader.
+        let b64 = b64_single(&cacao(OWNER, SERVER));
+        for vis in [GraphVisibility::Public, GraphVisibility::Authenticated] {
+            assert_eq!(private_read_verified_reader(&vis, Some(&b64), SERVER), None);
+        }
+    }
+
+    #[test]
+    fn pre_r1_serialized_receipt_reads_as_operator() {
+        let old = serde_json::json!({
+            "graph_mb": "bOld", "accessor_did": "did:key:zOld", "operation": "datom:q",
+            "purpose": null, "ts_unix": 1, "cacao_cid": null,
+            "client_ip": null, "user_agent": null, "request_id": null
+        });
+        let r: AccessReceipt = serde_json::from_value(old).unwrap();
+        assert_eq!(r.visibility, ReceiptVisibility::Operator);
+        let ser = serde_json::to_value(AccessReceipt::default().into_owner_only()).unwrap();
+        assert_eq!(ser["visibility"], "owner-only");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn self_access_records_owner_only_without_accessor_purpose_or_client_meta() {
+        let state = state();
+        let r = record_one(
+            &state,
+            &bearer(OWNER),
+            &private_owned_by(OWNER),
+            Some(OWNER),
+        );
+        assert_eq!(r.visibility, ReceiptVisibility::OwnerOnly);
+        assert_eq!(r.operation, "datom:q");
+        assert!(r.ts_unix > 1_700_000_000);
+        assert!(r.accessor_did.is_none() && r.purpose.is_none() && r.cacao_cid.is_none());
+        assert!(r.client_ip.is_none() && r.user_agent.is_none() && r.request_id.is_none());
+        assert_eq!(
+            attrs(&r),
+            vec![
+                "access/graph",
+                "access/operation",
+                "access/ts-unix",
+                "access/visibility"
+            ]
+        );
+    }
+
+    #[test]
+    fn owner_only_datoms_strip_fields_even_if_caller_forgot() {
+        // Defence in depth: a fully-populated receipt flagged OwnerOnly still
+        // emits only the minimal datoms.
+        let r = AccessReceipt {
+            graph_mb: "bG".into(),
+            accessor_did: Some(OWNER.into()),
+            operation: "datom:q".into(),
+            purpose: Some("p".into()),
+            ts_unix: 5,
+            cacao_cid: Some("bC".into()),
+            client_ip: Some("1.2.3.4".into()),
+            user_agent: Some("ua".into()),
+            request_id: Some("rid".into()),
+            visibility: ReceiptVisibility::OwnerOnly,
+        };
+        assert_eq!(
+            attrs(&r),
+            vec![
+                "access/graph",
+                "access/operation",
+                "access/ts-unix",
+                "access/visibility"
+            ]
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn other_access_stays_operator_visible_and_fully_attributed() {
+        let state = state();
+        let r = record_one(
+            &state,
+            &bearer(OTHER),
+            &private_owned_by(OWNER),
+            Some(OTHER),
+        );
+        assert_eq!(r.visibility, ReceiptVisibility::Operator);
+        assert_eq!(r.accessor_did.as_deref(), Some(OTHER));
+        assert_eq!(r.purpose.as_deref(), Some("reading my own notes"));
+        let a = attrs(&r);
+        assert!(a.contains(&"access/accessor-did".to_string()));
+        assert!(a.contains(&"access/purpose".to_string()));
+        assert!(!a.contains(&"access/visibility".to_string()));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn anonymous_access_is_operator_visible() {
+        let state = state();
+        let r = record_one(&state, &HeaderMap::new(), &GraphVisibility::Public, None);
+        assert_eq!(r.visibility, ReceiptVisibility::Operator);
+        assert!(r.accessor_did.is_none());
+        // Anonymous on a Private graph (no verified accessor) is also Operator.
+        let r = record_one(&state, &HeaderMap::new(), &private_owned_by(OWNER), None);
+        assert_eq!(r.visibility, ReceiptVisibility::Operator);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn operator_listing_hides_owner_only_and_chain_verifies_with_mixed_receipts() {
+        let state = state();
+        let other = AccessReceipt {
+            graph_mb: "bMixed".into(),
+            accessor_did: Some(OTHER.into()),
+            operation: "datom:q".into(),
+            purpose: Some("support ticket".into()),
+            ts_unix: 1_780_100_000,
+            ..Default::default()
+        };
+        let own = AccessReceipt {
+            graph_mb: "bMixed".into(),
+            operation: "datom:q".into(),
+            ts_unix: 1_780_100_001,
+            ..Default::default()
+        }
+        .into_owner_only();
+        // Batch 1: mixed; batch 2: owner-only alone.
+        write_receipt_batch(&state, vec![other, own.clone()]).await;
+        write_receipt_batch(&state, vec![own]).await;
+
+        let quads = state
+            .quad_store
+            .quads_by_predicate_prefix(Some(&receipts_graph_cid()), "access/")
+            .await;
+        // The owner-only receipts ARE in the audit graph (2 of them)…
+        let owner_only_count = quads
+            .iter()
+            .filter(|q| q.predicate == "access/visibility")
+            .count();
+        assert_eq!(owner_only_count, 2);
+        // …but the operator listing only sees the third-party read.
+        let listed = operator_visible_receipts(&quads, &AuditListQuery::default());
+        assert_eq!(listed.len(), 1, "{listed:?}");
+        assert_eq!(listed[0]["accessorDid"], OTHER);
+        assert!(listed[0].get("visibility").is_none());
+
+        // Commit chain still verifies over mixed receipts (the visibility datom
+        // is inside the author-signed commit).
+        let ipns = crate::xrpc::distributed_graph_ipns_name(&receipts_graph_cid());
+        let record = state
+            .ipns_registry
+            .resolve(&kotoba_ipfs::IpnsName::new(ipns))
+            .expect("head");
+        let mut cursor = KotobaCid::from_multibase(&record.value);
+        let mut depth = 0;
+        while let Some(cid) = cursor.take() {
+            let commit = kotoba_datomic::distributed::DistributedDatomCommit::load(
+                &cid,
+                &*state.block_store,
+            )
+            .unwrap()
+            .unwrap();
+            let verdict = kotoba_auth::verify_commit_author_sig(&commit);
+            if state.operator_did.starts_with("did:key:") {
+                assert_eq!(
+                    verdict,
+                    kotoba_auth::CommitSigVerdict::Valid,
+                    "depth {depth}"
+                );
+            } else {
+                assert!(!matches!(verdict, kotoba_auth::CommitSigVerdict::Invalid));
             }
             depth += 1;
             cursor = commit.prev.clone();

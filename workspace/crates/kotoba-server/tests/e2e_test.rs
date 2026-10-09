@@ -14462,7 +14462,12 @@ async fn key_request_share_full_custodian_flow() {
     let requester_pk_hex = hex::encode(PublicKey::from(&requester_sk).as_bytes());
 
     // Unauthorized: Private graph, no CACAO → denied, no share material.
-    s.register_private_graph(&graph).await;
+    // The graph is owned by a third party (not the CACAO signer), so the
+    // authorized release below is a THIRD-PARTY access and its receipt stays
+    // operator-visible (ADR-2610081200 R1 — owner self-access is covered by
+    // key_request_share_owner_self_access_is_owner_only_but_receipted).
+    s.register_private_graph_owned_by(&graph, "did:key:zR3bThirdPartyOwner")
+        .await;
     let (status, denied) = s
         .post(
             "/xrpc/com.etzhayyim.apps.kotoba.key.requestShare",
@@ -14531,6 +14536,310 @@ async fn key_request_share_full_custodian_flow() {
         }
     }
     assert!(found, "key release must leave a receipt");
+}
+
+/// ADR-2610081200 R1: when the graph OWNER requests their own key share, the
+/// receipt is owner-only — hidden from the operator listing — yet the custody
+/// cross-audit still finds it (the signed grant reports as `receipted`).
+#[tokio::test]
+async fn key_request_share_owner_self_access_is_owner_only_but_receipted() {
+    use x25519_dalek::{PublicKey, StaticSecret};
+
+    std::env::set_var("KOTOBA_RECEIPT_FLUSH_MS", "50");
+    let s = TestServer::start(false).await;
+    let op_tok = tenant_jwt(&s.operator_did);
+    let graph = kotoba_core::cid::KotobaCid::from_bytes(b"r1-owner-only-graph").to_multibase();
+    assert_ne!(
+        cacao_signer_did(),
+        s.operator_did,
+        "fixture: owner must differ from operator"
+    );
+
+    let (st, info) = s
+        .get("/xrpc/com.etzhayyim.apps.kotoba.key.custodianInfo")
+        .await;
+    assert_eq!(st, 200, "{info}");
+    let node_pk = {
+        let b = hex::decode(info["x25519PubkeyHex"].as_str().unwrap()).unwrap();
+        PublicKey::from(<[u8; 32]>::try_from(b).unwrap())
+    };
+    let pubs: Vec<(String, PublicKey)> = vec![
+        (info["did"].as_str().unwrap().to_string(), node_pk),
+        (
+            "did:key:zOo2".into(),
+            PublicKey::from(&StaticSecret::from([12u8; 32])),
+        ),
+        (
+            "did:key:zOo3".into(),
+            PublicKey::from(&StaticSecret::from([13u8; 32])),
+        ),
+    ];
+    let shares = kotoba_custody::split_key(&[66u8; 32], 2, &pubs).unwrap();
+    let (st, dep) = s
+        .post_auth(
+            "/xrpc/com.etzhayyim.apps.kotoba.key.depositShare",
+            json!({"graph": graph, "share": serde_json::to_value(&shares[0]).unwrap()}),
+            &op_tok,
+        )
+        .await;
+    assert_eq!(st, 200, "{dep}");
+
+    // Owner = the CACAO signer → self-access.
+    s.register_private_graph(&graph).await;
+    let requester_sk = StaticSecret::from([0x77u8; 32]);
+    let cacao_b64 = build_ed25519_cacao_for_operation(
+        &graph,
+        &s.operator_did,
+        kotoba_auth::CacaoPayload::OP_DATOM_READ,
+        "r1-owner-only-nonce",
+    );
+    let (st, granted) = s
+        .post(
+            "/xrpc/com.etzhayyim.apps.kotoba.key.requestShare",
+            json!({
+                "graph": graph,
+                "cacao_b64": cacao_b64,
+                "purpose": "restoring my own key",
+                "nonce": "r1-owner-only-nonce",
+                "requester_x25519_pk_hex": hex::encode(PublicKey::from(&requester_sk).as_bytes()),
+            }),
+        )
+        .await;
+    assert_eq!(st, 200, "{granted}");
+    assert_eq!(
+        granted["ok"], true,
+        "owner self-request must grant: {granted}"
+    );
+    let grant = granted["grant"].clone();
+
+    // Custody cross-audit still covers the release (owner-only receipt).
+    let mut verdict = Value::Null;
+    for _ in 0..40 {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let (st, report) = s
+            .post(
+                "/xrpc/com.etzhayyim.apps.kotoba.key.reportUnreceiptedRelease",
+                json!({"grant": grant, "window_secs": 600}),
+            )
+            .await;
+        assert_eq!(st, 200, "{report}");
+        if report["verdict"] == "receipted" {
+            verdict = report;
+            break;
+        }
+    }
+    assert_eq!(verdict["warranted"], false, "must be receipted: {verdict}");
+
+    // …but the operator listing does not show it.
+    let (st, body) = s
+        .get_with_auth(
+            "/xrpc/com.etzhayyim.apps.kotoba.audit.listReceipts",
+            &op_tok,
+        )
+        .await;
+    assert_eq!(st, 200, "{body}");
+    let leaked = body["receipts"]
+        .as_array()
+        .map(|a| a.iter().any(|r| r["graph"] == graph.as_str()))
+        .unwrap_or(false);
+    assert!(
+        !leaked,
+        "owner self-access receipt must be hidden from the operator: {body}"
+    );
+}
+
+/// Signed Ed25519 CACAO `seed → audience` granting `operation` on `graph`
+/// (same shape as `build_ed25519_cacao_for_operation`, any signing seed).
+fn build_signed_cacao(
+    seed: u8,
+    graph: &str,
+    audience: &str,
+    operation: &str,
+    nonce: &str,
+) -> kotoba_auth::Cacao {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+    use ed25519_dalek::{Signer, SigningKey};
+    use kotoba_auth::did_key::ed25519_pubkey_to_did_key;
+
+    let sk = SigningKey::from_bytes(&[seed; 32]);
+    let mut cacao = kotoba_auth::Cacao {
+        h: kotoba_auth::CacaoHeader {
+            t: "caip122".into(),
+        },
+        p: kotoba_auth::CacaoPayload {
+            iss: ed25519_pubkey_to_did_key(sk.verifying_key().as_bytes()),
+            aud: audience.to_string(),
+            issued_at: "2026-05-26T00:00:00Z".into(),
+            expiry: Some("2030-01-01T00:00:00Z".into()),
+            nonce: nonce.to_string(),
+            domain: "kotoba.test".into(),
+            statement: Some(format!("Authorize {operation}")),
+            version: "1".into(),
+            resources: vec![
+                format!("kotoba://graph/{graph}"),
+                format!("kotoba://op/{operation}"),
+            ],
+        },
+        s: kotoba_auth::CacaoSig {
+            t: "EdDSA".into(),
+            s: String::new(),
+        },
+    };
+    let sig: ed25519_dalek::Signature = sk.sign(cacao.siwe_message().as_bytes());
+    cacao.s.s = URL_SAFE_NO_PAD.encode(sig.to_bytes());
+    cacao
+}
+
+/// Seed a private graph owned by `cacao_signer_did()` with one fact.
+async fn seed_owned_private_graph(s: &TestServer, label: &[u8]) -> String {
+    let graph = kotoba_core::cid::KotobaCid::from_bytes(label).to_multibase();
+    let (status, body) = s
+        .post_auth(
+            "/xrpc/com.etzhayyim.apps.kotoba.datomic.transact",
+            json!({"graph": graph, "tx_edn": r#"[{:db/id "alice" :person/name "Alice"}]"#}),
+            &tenant_jwt(&s.operator_did),
+        )
+        .await;
+    assert_eq!(status, 200, "{body}");
+    s.register_private_graph(&graph).await;
+    assert_ne!(
+        cacao_signer_did(),
+        s.operator_did,
+        "fixture: owner ≠ operator"
+    );
+    graph
+}
+
+/// Audit-graph receipt subjects for `graph`, split by owner-only marker:
+/// `(operator_visible, owner_only)`.
+async fn receipts_for_graph(s: &TestServer, graph: &str) -> (usize, usize) {
+    use std::collections::{HashMap, HashSet};
+    let quads = s
+        .state
+        .quad_store
+        .quads_by_predicate_prefix(
+            Some(&kotoba_server::access_receipt::receipts_graph_cid()),
+            "access/",
+        )
+        .await;
+    let mut by_subject: HashMap<String, Vec<&kotoba_query::quad::LegacyQuad>> = HashMap::new();
+    for q in &quads {
+        by_subject
+            .entry(q.subject.to_multibase())
+            .or_default()
+            .push(q);
+    }
+    let mut seen = HashSet::new();
+    let (mut operator, mut owner_only) = (0, 0);
+    for (subject, qs) in &by_subject {
+        let for_graph = qs
+            .iter()
+            .any(|q| q.predicate == "access/graph" && format!("{:?}", q.object).contains(graph));
+        if !for_graph || !seen.insert(subject.clone()) {
+            continue;
+        }
+        if qs.iter().any(|q| q.predicate == "access/visibility") {
+            owner_only += 1;
+        } else {
+            operator += 1;
+        }
+    }
+    (operator, owner_only)
+}
+
+async fn operator_lists_graph(s: &TestServer, graph: &str) -> bool {
+    let (st, body) = s
+        .get_with_auth(
+            "/xrpc/com.etzhayyim.apps.kotoba.audit.listReceipts",
+            &tenant_jwt(&s.operator_did),
+        )
+        .await;
+    assert_eq!(st, 200, "{body}");
+    body["receipts"]
+        .as_array()
+        .map(|a| a.iter().any(|r| r["graph"] == graph))
+        .unwrap_or(false)
+}
+
+async fn datomic_q(s: &TestServer, graph: &str, cacao_b64: &str) {
+    let (status, body) = s
+        .post(
+            "/xrpc/com.etzhayyim.apps.kotoba.datomic.q",
+            json!({
+                "graph": graph,
+                "query_edn": r#"{:find [?name] :where [[?e :person/name ?name]]}"#,
+                "cacao_b64": cacao_b64
+            }),
+        )
+        .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["rows_edn"], json!([["\"Alice\""]]), "{body}");
+}
+
+async fn wait_for_receipts(s: &TestServer, graph: &str) -> (usize, usize) {
+    for _ in 0..40 {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let counts = receipts_for_graph(s, graph).await;
+        if counts.0 + counts.1 > 0 {
+            return counts;
+        }
+    }
+    (0, 0)
+}
+
+/// ADR-2610081200 R1 reader binding (a): the OWNER reads their own Private
+/// graph with an invocation they signed for this server → an owner-only
+/// receipt is written and the operator listing does not show it.
+#[tokio::test]
+async fn r1_owner_reading_own_private_graph_is_owner_only_receipt() {
+    std::env::set_var("KOTOBA_RECEIPT_FLUSH_MS", "50");
+    let s = TestServer::start(false).await;
+    let graph = seed_owned_private_graph(&s, b"r1-reader-owner-graph").await;
+    let cacao_b64 = build_ed25519_cacao_for_operation(
+        &graph,
+        &s.operator_did,
+        kotoba_auth::CacaoPayload::OP_DATOM_READ,
+        "r1-reader-owner-nonce",
+    );
+    datomic_q(&s, &graph, &cacao_b64).await;
+    assert_eq!(
+        wait_for_receipts(&s, &graph).await,
+        (0, 1),
+        "one owner-only receipt"
+    );
+    assert!(
+        !operator_lists_graph(&s, &graph).await,
+        "hidden from the operator"
+    );
+}
+
+/// ADR-2610081200 R1 reader binding (b): a THIRD PARTY reads with a delegation
+/// the owner issued (depth-2 chain owner → delegate → this server). The gate
+/// reports the owner as the chain's issuer, but the reader is the delegate, so
+/// the receipt is operator-visible exactly as before R1.
+#[tokio::test]
+async fn r1_third_party_reading_with_owner_delegation_stays_operator_visible() {
+    use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
+    std::env::set_var("KOTOBA_RECEIPT_FLUSH_MS", "50");
+    let s = TestServer::start(false).await;
+    let graph = seed_owned_private_graph(&s, b"r1-reader-delegate-graph").await;
+    let op = kotoba_auth::CacaoPayload::OP_DATOM_READ;
+    let delegate = build_signed_cacao(44, &graph, &s.operator_did, op, "r1-delegate-leaf");
+    let root = build_signed_cacao(43, &graph, &delegate.p.iss, op, "r1-delegate-root");
+    assert_eq!(root.p.iss, cacao_signer_did(), "root issuer is the owner");
+    assert_ne!(delegate.p.iss, root.p.iss, "reader is someone else");
+    let mut cbor = Vec::new();
+    ciborium::into_writer(&vec![root, delegate], &mut cbor).unwrap();
+    datomic_q(&s, &graph, &B64.encode(cbor)).await;
+    assert_eq!(
+        wait_for_receipts(&s, &graph).await,
+        (1, 0),
+        "one operator-visible receipt"
+    );
+    assert!(
+        operator_lists_graph(&s, &graph).await,
+        "listed to the operator"
+    );
 }
 
 /// R3c: depositShare enforces epoch monotonicity (a stale dealing can't replace
