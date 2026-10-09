@@ -117,13 +117,64 @@ pub(crate) fn receipt_visibility_for(
     }
 }
 
-/// The accessor DID that `graph_auth::check_read_access` VERIFIED when it
-/// returned `Ok` for `visibility`: its Private branch only succeeds for a
-/// signature-verified CACAO whose issuer IS the owner, so the owner is the
-/// verified accessor. Public/Authenticated verify no DID → `None`.
-pub(crate) fn check_read_access_verified_accessor(visibility: &GraphVisibility) -> Option<&str> {
+/// ADR-2610081200 R1 — WHO IS READING, as established by a CACAO that the read
+/// gate has already accepted (signature, capability, graph scope, audience,
+/// owner binding).
+///
+/// Being the delegation's *issuer* is not enough. Every gate reports the chain
+/// ROOT issuer (for a Private graph that is always the owner), and an owner may
+/// delegate a read to a third party: a depth-2 chain `owner → delegate`,
+/// `delegate → this server`. The reader is the party that signed the LEAF
+/// invocation presented to this server, and only when that leaf is addressed
+/// to this server (`aud == server_aud`) or to the signer itself. A leaf
+/// addressed to anyone else is a delegation to that party, so the reader is
+/// not established and this returns `None`.
+///
+/// Fail closed: missing, oversized, undecodable or unparseable input, an empty
+/// `iss`, or an empty / foreign `aud` all return `None`, which keeps the
+/// receipt operator-visible. Identity is compared by exact DID; keys an owner
+/// controls under another DID are not treated as the owner (that would need a
+/// verified DID-document link and is left operator-visible).
+///
+/// Call only AFTER the gate accepted the same `cacao_b64`: this re-parses those
+/// bytes and relies on the gate having verified the leaf signature.
+pub(crate) fn verified_cacao_reader(cacao_b64: Option<&str>, server_aud: &str) -> Option<String> {
+    const MAX_CACAO_B64_LEN: usize = 8 * 1024;
+    let b64 = cacao_b64?;
+    if b64.is_empty() || b64.len() > MAX_CACAO_B64_LEN {
+        return None;
+    }
+    let cbor = B64.decode(b64).ok()?;
+    let leaf = match kotoba_auth::Cacao::from_cbor(&cbor) {
+        Ok(single) => single,
+        Err(_) => kotoba_auth::DelegationChain::from_cbor_chain(&cbor)
+            .ok()?
+            .chain
+            .pop()?,
+    };
+    let iss = leaf.p.iss;
+    let aud = leaf.p.aud;
+    if iss.is_empty() || aud.is_empty() {
+        return None;
+    }
+    if aud == server_aud || aud == iss {
+        Some(iss)
+    } else {
+        None
+    }
+}
+
+/// The verified reader of a Private-graph read that passed
+/// `graph_auth::check_read_access` (or the datomic CACAO grant path) with
+/// `cacao_b64`. Public / Authenticated graphs verify no reader → `None`.
+/// See [`verified_cacao_reader`].
+pub(crate) fn private_read_verified_reader(
+    visibility: &GraphVisibility,
+    cacao_b64: Option<&str>,
+    server_aud: &str,
+) -> Option<String> {
     match visibility {
-        GraphVisibility::Private { owner_did } => Some(owner_did.as_str()),
+        GraphVisibility::Private { .. } => verified_cacao_reader(cacao_b64, server_aud),
         _ => None,
     }
 }
@@ -1367,6 +1418,153 @@ mod owner_only_tests {
             );
         }
         assert_eq!(ReceiptVisibility::default(), ReceiptVisibility::Operator);
+    }
+
+    // ── Reader binding (who is READING, not who issued the delegation) ──────
+
+    const SERVER: &str = "did:key:zOperator";
+    const DELEGATE: &str = "did:key:zThirdPartyDelegate";
+
+    /// An (unsigned) CACAO `iss → aud`. `verified_cacao_reader` runs only after
+    /// the gate verified the signatures, so it does not check them itself.
+    fn cacao(iss: &str, aud: &str) -> kotoba_auth::Cacao {
+        kotoba_auth::Cacao {
+            h: kotoba_auth::CacaoHeader {
+                t: "caip122".into(),
+            },
+            p: kotoba_auth::CacaoPayload {
+                iss: iss.into(),
+                aud: aud.into(),
+                issued_at: "2026-10-01T00:00:00Z".into(),
+                expiry: Some("2030-01-01T00:00:00Z".into()),
+                nonce: "n".into(),
+                domain: "kotoba.test".into(),
+                statement: None,
+                version: "1".into(),
+                resources: vec!["kotoba://op/datom:read".into()],
+            },
+            s: kotoba_auth::CacaoSig {
+                t: "EdDSA".into(),
+                s: String::new(),
+            },
+        }
+    }
+
+    fn b64_single(c: &kotoba_auth::Cacao) -> String {
+        let mut buf = Vec::new();
+        ciborium::into_writer(c, &mut buf).unwrap();
+        B64.encode(buf)
+    }
+
+    fn b64_chain(chain: &[kotoba_auth::Cacao]) -> String {
+        let mut buf = Vec::new();
+        ciborium::into_writer(&chain.to_vec(), &mut buf).unwrap();
+        B64.encode(buf)
+    }
+
+    fn classify(cacao_b64: Option<&str>) -> (Option<String>, ReceiptVisibility) {
+        let vis = private_owned_by(OWNER);
+        let reader = private_read_verified_reader(&vis, cacao_b64, SERVER);
+        let v = receipt_visibility_for(&vis, reader.as_deref(), SERVER);
+        (reader, v)
+    }
+
+    /// (a) The owner signs the invocation presented to this server → the owner
+    /// is the reader → owner-only receipt, recorded but hidden from the operator.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn reader_binding_owner_reading_own_graph_is_owner_only() {
+        let b64 = b64_single(&cacao(OWNER, SERVER));
+        let (reader, v) = classify(Some(&b64));
+        assert_eq!(reader.as_deref(), Some(OWNER));
+        assert_eq!(v, ReceiptVisibility::OwnerOnly);
+        // Self-addressed (aud = the owner's own DID) is also the owner reading.
+        assert_eq!(
+            classify(Some(&b64_single(&cacao(OWNER, OWNER)))).1,
+            ReceiptVisibility::OwnerOnly
+        );
+
+        let state = state();
+        let r = record_one(
+            &state,
+            &bearer(OWNER),
+            &private_owned_by(OWNER),
+            reader.as_deref(),
+        );
+        assert_eq!(
+            r.visibility,
+            ReceiptVisibility::OwnerOnly,
+            "a receipt is still written"
+        );
+        let subject = receipt_cid(&r, 1);
+        let quads: Vec<_> = build_receipt_datoms(&r, &subject, &KotobaCid::from_bytes(b"tx"))
+            .into_iter()
+            .collect();
+        assert!(quads.iter().any(|d| d.a == "access/visibility"));
+    }
+
+    /// (b) A third party reads with a delegation the owner issued. Every gate
+    /// reports the chain ROOT issuer (the owner), but the reader is the
+    /// delegate → operator-visible, with the same fields as before R1.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn reader_binding_third_party_with_owner_delegation_stays_operator_visible() {
+        // Depth-2 chain: owner → delegate, delegate → this server.
+        let chain = b64_chain(&[cacao(OWNER, DELEGATE), cacao(DELEGATE, SERVER)]);
+        let (reader, v) = classify(Some(&chain));
+        assert_eq!(
+            reader.as_deref(),
+            Some(DELEGATE),
+            "reader is the leaf signer"
+        );
+        assert_eq!(v, ReceiptVisibility::Operator);
+        // Single owner-issued CACAO whose audience is the third party: a
+        // delegation to them, so the reader is not established → recorded.
+        let delegated = b64_single(&cacao(OWNER, DELEGATE));
+        assert_eq!(
+            classify(Some(&delegated)),
+            (None, ReceiptVisibility::Operator)
+        );
+
+        let state = state();
+        // The issuer-based attribution the gate used to hand over is the owner;
+        // the receipt must not become owner-only because of it.
+        let r = record_one(
+            &state,
+            &bearer(DELEGATE),
+            &private_owned_by(OWNER),
+            reader.as_deref(),
+        );
+        assert_eq!(r.visibility, ReceiptVisibility::Operator);
+        assert_eq!(r.purpose.as_deref(), Some("reading my own notes"));
+        assert_eq!(r.client_ip.as_deref(), Some("203.0.113.9"));
+        assert!(r.accessor_did.is_some(), "attribution recorded as before");
+        assert!(!attrs(&r).iter().any(|a| a == "access/visibility"));
+    }
+
+    /// (c) The reader cannot be established → fail closed: recorded, operator-visible.
+    #[test]
+    fn reader_binding_undeterminable_reader_is_recorded() {
+        let undeterminable: Vec<Option<String>> = vec![
+            None,
+            Some(String::new()),
+            Some("!!not base64!!".into()),
+            Some(B64.encode(b"not cbor")),
+            Some("A".repeat(9 * 1024)),
+            Some(b64_single(&cacao(OWNER, ""))),
+            Some(b64_single(&cacao("", SERVER))),
+            Some(b64_single(&cacao(OWNER, "did:key:zSomeOtherServer"))),
+        ];
+        for b64 in undeterminable {
+            assert_eq!(
+                classify(b64.as_deref()),
+                (None, ReceiptVisibility::Operator),
+                "{b64:?}"
+            );
+        }
+        // Non-private graphs never establish a self-access reader.
+        let b64 = b64_single(&cacao(OWNER, SERVER));
+        for vis in [GraphVisibility::Public, GraphVisibility::Authenticated] {
+            assert_eq!(private_read_verified_reader(&vis, Some(&b64), SERVER), None);
+        }
     }
 
     #[test]

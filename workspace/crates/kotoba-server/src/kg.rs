@@ -501,8 +501,14 @@ pub async fn kg_entity(
         &graph_cid,
         &visibility,
         "kg:entity",
-        // check_read_access passed → its verified DID (owner for Private).
-        crate::access_receipt::check_read_access_verified_accessor(&visibility),
+        // ADR-2610081200 R1: the verified READER (leaf signer addressed to this
+        // server), not the delegation issuer. Unknown reader → operator-visible.
+        crate::access_receipt::private_read_verified_reader(
+            &visibility,
+            q.cacao_b64.as_deref(),
+            &state.operator_did,
+        )
+        .as_deref(),
     )?;
 
     let (lookup_pred, lookup_val) = match (&q.id, &q.qid) {
@@ -679,8 +685,14 @@ pub async fn kg_catalog(
         &graph_cid,
         &visibility,
         "kg:catalog",
-        // check_read_access passed → its verified DID (owner for Private).
-        crate::access_receipt::check_read_access_verified_accessor(&visibility),
+        // ADR-2610081200 R1: the verified READER (leaf signer addressed to this
+        // server), not the delegation issuer. Unknown reader → operator-visible.
+        crate::access_receipt::private_read_verified_reader(
+            &visibility,
+            q.cacao_b64.as_deref(),
+            &state.operator_did,
+        )
+        .as_deref(),
     )?;
 
     let quads = current_graph_quads(&state, &graph_cid).await?;
@@ -884,8 +896,14 @@ pub async fn kg_search(
         &graph_cid,
         &visibility,
         "kg:search",
-        // check_read_access passed → its verified DID (owner for Private).
-        crate::access_receipt::check_read_access_verified_accessor(&visibility),
+        // ADR-2610081200 R1: the verified READER (leaf signer addressed to this
+        // server), not the delegation issuer. Unknown reader → operator-visible.
+        crate::access_receipt::private_read_verified_reader(
+            &visibility,
+            q.cacao_b64.as_deref(),
+            &state.operator_did,
+        )
+        .as_deref(),
     )?;
 
     // Use inference engine for query embedding when available, matching kg_embed semantics.
@@ -1976,8 +1994,14 @@ pub async fn kg_query(
         &graph_cid,
         &visibility,
         "kg:query",
-        // check_read_access passed → its verified DID (owner for Private).
-        crate::access_receipt::check_read_access_verified_accessor(&visibility),
+        // ADR-2610081200 R1: the verified READER (leaf signer addressed to this
+        // server), not the delegation issuer. Unknown reader → operator-visible.
+        crate::access_receipt::private_read_verified_reader(
+            &visibility,
+            req.cacao_b64.as_deref(),
+            &state.operator_did,
+        )
+        .as_deref(),
     )?;
     // Persist emit_cid envelopes only for Public graphs (block.get is
     // unauthenticated — see put_envelope).

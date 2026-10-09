@@ -207,17 +207,19 @@ fn authorize_share_release(
     }
 
     // Receipt — same shape as a read receipt, operation = key:requestShare.
-    // ADR-2610081200 R1: for a Private graph `accessor_did` is the CACAO issuer
-    // VERIFIED above, so when it is the graph owner (and the owner is not the
-    // operator) this is owner self-access → an owner-only receipt. It still
-    // carries graph / operation / ts, so the R3d cross-audit (`audit_grant`)
-    // keeps matching the custodian's signed grant against it.
-    let verified_accessor = match visibility {
-        GraphVisibility::Private { .. } => accessor_did.as_deref(),
-        // Authenticated attribution comes from an unverified parse → never
-        // counts as verified self-access.
-        _ => None,
-    };
+    // ADR-2610081200 R1: owner self-access → an owner-only receipt, which still
+    // carries graph / operation / ts so the R3d cross-audit (`audit_grant`)
+    // keeps matching the custodian's signed grant against it. `accessor_did`
+    // (the verified CACAO issuer, kept for the operator-visible receipt as
+    // before) is not enough: self-access needs the verified READER — the leaf
+    // signer addressed to this server — to be the owner. Authenticated
+    // attribution comes from an unverified parse → never self-access.
+    let verified_reader = crate::access_receipt::private_read_verified_reader(
+        visibility,
+        req.cacao_b64.as_deref(),
+        &state.operator_did,
+    );
+    let verified_accessor = verified_reader.as_deref();
     let ts_unix = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()

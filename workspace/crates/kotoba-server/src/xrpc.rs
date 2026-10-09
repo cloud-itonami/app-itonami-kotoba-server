@@ -1742,7 +1742,12 @@ async fn require_datomic_read_any_operation(
                 }
                 enforce_datomic_temporal_tx_scope(&payload, as_of, since)?;
                 reader_did = Some(payload.iss.clone());
-                verified_accessor = Some(payload.iss.clone());
+                // ADR-2610081200 R1: `payload.iss` is the chain ROOT issuer (the
+                // owner, by the check above), which a third-party delegate's
+                // depth-2 chain also carries. The receipt's reader is the leaf
+                // signer addressed to this server; unknown → operator-visible.
+                verified_accessor =
+                    crate::access_receipt::verified_cacao_reader(cacao_b64, &state.operator_did);
                 break 'authorized;
             }
         }
@@ -1764,8 +1769,11 @@ async fn require_datomic_read_any_operation(
             None,
         )
         .map_err(AccessDenied::into_response)?;
-        verified_accessor = crate::access_receipt::check_read_access_verified_accessor(&visibility)
-            .map(str::to_string);
+        verified_accessor = crate::access_receipt::private_read_verified_reader(
+            &visibility,
+            cacao_b64,
+            &state.operator_did,
+        );
     }
     // ADR-sealed-cold-tier R1: purpose policy + access receipt for every
     // authorized non-public datomic read, regardless of which gate passed.
@@ -1833,7 +1841,12 @@ async fn require_datomic_read_tx_range(
             ) {
                 enforce_datomic_range_tx_scope(&payload, start, end)?;
                 reader_did = Some(payload.iss.clone());
-                verified_accessor = Some(payload.iss.clone());
+                // ADR-2610081200 R1: `payload.iss` is the chain ROOT issuer (the
+                // owner, by the check above), which a third-party delegate's
+                // depth-2 chain also carries. The receipt's reader is the leaf
+                // signer addressed to this server; unknown → operator-visible.
+                verified_accessor =
+                    crate::access_receipt::verified_cacao_reader(cacao_b64, &state.operator_did);
                 break 'authorized;
             }
         }
@@ -1865,8 +1878,11 @@ async fn require_datomic_read_tx_range(
             None,
         )
         .map_err(AccessDenied::into_response)?;
-        verified_accessor = crate::access_receipt::check_read_access_verified_accessor(&visibility)
-            .map(str::to_string);
+        verified_accessor = crate::access_receipt::private_read_verified_reader(
+            &visibility,
+            cacao_b64,
+            &state.operator_did,
+        );
     }
     // ADR-sealed-cold-tier R1: purpose policy + access receipt (see
     // require_datomic_read_any_operation).

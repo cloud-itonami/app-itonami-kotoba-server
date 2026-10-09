@@ -121,8 +121,16 @@ fully receipted and operator-visible.
   (default), OwnerOnly }` (`#[serde(default)]`; a receipt with no
   `access/visibility` datom — i.e. all pre-amendment data — reads as Operator).
 - **Self-access rule** (`receipt_visibility_for`): graph is
-  `Private { owner_did }`, the accessor DID the gate **cryptographically
-  verified** equals `owner_did`, and `owner_did != operator_did`. Anything else
+  `Private { owner_did }`, the verified **reader** equals `owner_did`, and
+  `owner_did != operator_did`. The reader (`verified_cacao_reader`) is the
+  signer of the LEAF CACAO the gate accepted, and only when that leaf is
+  addressed to this server (`aud == operator_did`) or to the signer itself.
+  Being the delegation's issuer is not enough: every gate reports the chain
+  ROOT issuer, which for a Private graph is always the owner — also when the
+  owner delegated to a third party (depth-2 chain owner → delegate → server,
+  or a single CACAO whose `aud` names the delegate). Such reads, and any read
+  whose reader cannot be established, stay Operator. Identity is exact-DID
+  only; a key the owner controls under another DID is not treated as the owner. Anything else
   — Public/Authenticated (no owner), anonymous, unverified attribution (Bearer
   `sub`, decorative CACAO), VC presentations, operator-owned graphs (incl. the
   default-private fallback for unregistered graphs) — stays Operator
@@ -130,10 +138,9 @@ fully receipted and operator-visible.
   `accessor_from_request` attribution, prevents a third party from hiding its
   read by attaching an owner-issued CACAO it did not authenticate with.
 - **Covered seams**: `require_datomic_read{,_any_operation,_tx_range}` (CACAO
-  grant path → `payload.iss`; `check_read_access` fallback → owner, since its
-  Private branch only passes for an owner-issued, signature-verified CACAO), the
-  four `kotobase.kg.*` reads (`check_read_access`), and `key.requestShare`
-  (verified CACAO `iss` for Private graphs). Not covered (always Operator): the
+  grant path and `check_read_access` fallback), the four `kotobase.kg.*` reads
+  (`check_read_access`), and `key.requestShare` — all through
+  `verified_cacao_reader` on the CACAO the gate accepted. Not covered (always Operator): the
   VC-presentation read path and Authenticated-tier key-share attribution.
 - **Owner-only datoms**: `access/graph`, `access/operation`, `access/ts-unix`,
   `access/visibility "owner-only"` — no `access/accessor-did`, purpose, CACAO
